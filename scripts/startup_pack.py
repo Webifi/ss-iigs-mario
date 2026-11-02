@@ -13,22 +13,27 @@ from functools import lru_cache
 from pathlib import Path
 
 
+# Encode DATA as literals and backward copies. LAZY tries a one-byte
+# delay when it exposes a longer match; the result is compressed bytes.
 def _pack(data, lazy=False):
     out = bytearray()
     chains = defaultdict(lambda: deque(maxlen=32))
     literal = bytearray()
     i = 0
 
+    # Write the buffered literal bytes as one token and clear the buffer.
     def flush():
         if literal:
             out.append(len(literal) - 1)
             out.extend(literal)
             literal.clear()
 
+    # Index the three bytes at P as a possible later match.
     def remember(p):
         if p + 3 <= len(data):
             chains[data[p : p + 3]].append(p)
 
+    # Return the longest indexed match at P and its backward distance.
     def match(p):
         best = 0
         distance = 0
@@ -67,10 +72,12 @@ def _pack(data, lazy=False):
     return bytes(out)
 
 
+# Compress DATA as a startup block, returning its encoded bytes.
 def pack(data):
     return _packed(bytes(data))
 
 
+# Try both match strategies, verify the result and cache the smaller block.
 @lru_cache(maxsize=512)
 def _packed(data):
     assert len(data) <= 16384
@@ -79,6 +86,7 @@ def _packed(data):
     return result
 
 
+# Expand a startup block, returning its original bytes.
 def unpack(data):
     out = bytearray()
     i = 0

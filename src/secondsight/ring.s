@@ -109,7 +109,7 @@ ring_clear_all:
 ; Time:     each picture: about 300 clocks for each changed cell, 150 for an
 ;           unchanged one; a REC_CLEAR is about 1,000,000 clocks
 ; Original: the effects of $8E92-$8EE6 (the write lists) and $8E19
-;           (the clear), as ring cells (document 02 sections 11-20)
+;           (the clear), as ring cells
 ; ---------------------------------------------------------------------------
 apply_records:
         ld a,(hl)
@@ -300,7 +300,7 @@ record_colours:
         jp apply_records
 
 ; record_clear: the tile; every cell of the ring gets it, with palette 0
-; (the original's clear of both name tables, document 02 section 12).
+; (the original's clear of both name tables).
 record_clear:
         ld c,(hl)                       ; C = the tile
         inc hl

@@ -1,45 +1,14 @@
 ; The frame of the game: the power-on of the original and its frame
-; interrupt, which runs all of the game once each frame (documents 01
-; section 2 and 02 sections 2-10).
+; interrupt, which runs all of the game once each frame.
 ;
 ; The IIgs main loop (src/game.s) calls game_power_on once at the start and
 ; game_frame once for each frame of the DOC clock (src/clock.s): 4 ticks for
 ; each picture of the card's mode, so the game runs at the picture rate of
-; the monitor (60.0588 Hz on VGA, 60.1735 Hz on AppleColor RGB). The original
-; runs its frame from the picture chip's vertical blank interrupt; the port
-; keeps every step of it in its order (02 section 2), with the picture chip
-; work as one packet to the card (src/packet.s). A frame of the original
-; that runs past the next vertical blank loses a frame; the port, on the
-; faster CPU, never does (PLAN.md, "The original's timing").
-;
-; The steps of game_frame, in the original's order (02 section 2):
-;   1-6   the picture: the packet with the sprite list, the screen records
-;         of the frame's source and the scroll, all as the logic of the
-;         frame before left them (packet_frame)
-;   7     the sound program (sound_frame)
-;   8     the pads (read_pads)
-;   9     the pause (pause_check)
-;   10    the top score (top_score_update)
-;   11    the timers and frame_count, when not paused (step_timers)
-;   12    one step of the random bits, also when paused (step_random)
-;   13    with the status split, when not paused: hide_sprites and
-;         sprite_shuffle (the original also waits for the sprite 0 hit
-;         here: the card keeps the status rows in place itself)
-;   14    the scroll: in the packet of step 1-6
-;   15    when not paused: the game logic of the mode (mode_dispatch)
-;
-; Routines:
-;   game_power_on     the original's power-on (JSL from src/game.s)
-;   game_frame        one frame of the original (JSL from src/game.s)
-;   read_pads         the pads of the frame, with the start and select edges
-;   pause_check       start pauses and resumes the game
-;   step_timers       the frame timers, the slow timers, frame_count
-;   step_random       one step of the 56-bit random bits
-;   hide_all_sprites  every sprite below the picture
-;   hide_sprites      every sprite but sprite 0 below the picture
-;   sprite_shuffle    the objects' first sprites take turns in the list
-;   mode_dispatch     the routine of the mode
-;   clear_name_tables both name tables blank, list 1 empty, the scroll 0
+; the monitor (about 59.94 Hz on VGA, 60.05 Hz on AppleColor RGB). The
+; original runs its frame from the picture chip's vertical blank interrupt.
+; The port sends that picture work as a packet to the card (src/packet.s).
+; The clock counts frames due; if the game falls behind it catches up, subject
+; to the eight-bit count and the menu reset described in src/game.s.
 ;
 ; Register widths: A8 I8 at each entry and exit unless a header says
 ; otherwise. DBR = bank 0 (the game's variables). D = the player's record
@@ -48,15 +17,15 @@
 .a8
 .i8
 
-; Values of the frame (02 section 21, 01 section 2).
-RANDOM_SEED     = $A5           ; the first random byte at every start (01 section 2, step 8)
-RANDOM_TAP      = $02           ; the bit of random bytes 0 and 1 whose XOR enters the bits (02 section 5)
+; Values of the frame.
+RANDOM_SEED     = $A5           ; the first random byte at every start
+RANDOM_TAP      = $02           ; the bit of random bytes 0 and 1 whose XOR enters the bits
 PAUSE_ON        = $01           ; pause: bit 0, the game is paused
 PAUSE_HELD      = $80           ; pause: bit 7, a start press was taken
-PAUSE_WAIT      = $2B           ; frames before start works again (02 section 7)
-PAD_EDGE_BUTTONS = PAD_SELECT | PAD_START ; buttons that count only in the frame they go down (02 section 6)
+PAUSE_WAIT      = $2B           ; frames before start works again
+PAD_EDGE_BUTTONS = PAD_SELECT | PAD_START ; buttons that count only in the frame they go down
 SHUFFLE_RING_START = $28        ; sprite_offset from this on is in the shuffle ring of sprites 10-63
-SHUFFLE_FIRST_GROUPS = 15       ; sprite_offset entries 0-14 take the shuffle (02 section 9.2)
+SHUFFLE_FIRST_GROUPS = 15       ; sprite_offset entries 0-14 take the shuffle
 SHUFFLE_STEPS   = 3             ; shuffle_step runs 0-2
 MISC_SETS       = 3             ; the misc entries copy enemy entries 5, 6 and 7
 MISC_SPRITE_STEP = 8            ; each copy is 2 sprites (8 bytes) after the one before
@@ -65,7 +34,7 @@ SPRITE_ZERO_BYTES = SPRITE_ENTRY ; hide_sprites starts after sprite 0
 .segment "GAMEPLAY"
 
 ; ---------------------------------------------------------------------------
-; game_power_on: the original's power-on (01 section 2). The IIgs startup
+; game_power_on: the original's power-on. The IIgs startup
 ; (src/game.s) has cleared all of the game's state before, so every start is
 ; the original's cold start: the IIgs has no reset into a running game, and
 ; the warm start's kept top score does not occur.
@@ -108,7 +77,7 @@ game_power_on:
         rtl
 
 ; ---------------------------------------------------------------------------
-; game_frame: one frame of the original, steps 1-15 (02 section 2).
+; game_frame: one frame of the original, steps 1-15.
 ;
 ; In:       A8 I8; DBR = 0; any D
 ; Out:      A8 I8; D as it was
@@ -116,6 +85,23 @@ game_power_on:
 ; Time:     each frame
 ; Original: $8082-$8181 (the frame interrupt)
 ; ---------------------------------------------------------------------------
+; The steps of game_frame, in the original's order:
+;   1-6   the picture: the packet with the sprite list, the screen records
+;         of the frame's source and the scroll, all as the logic of the
+;         frame before left them (packet_frame)
+;   7     the sound program (sound_frame)
+;   8     the pads (read_pads)
+;   9     the pause (pause_check)
+;   10    the top score (top_score_update)
+;   11    the timers and frame_count, when not paused (step_timers)
+;   12    one step of the random bits, also when paused (step_random)
+;   13    with the status split, when not paused: hide_sprites and
+;         sprite_shuffle (the original also waits for the sprite 0 hit
+;         here: the card keeps the status rows in place itself)
+;   14    the scroll: in the packet of step 1-6
+;   15    when not paused: the game logic of the mode (mode_dispatch)
+;
+
 game_frame:
 .a8
 .i8
@@ -148,7 +134,7 @@ game_frame:
         rtl
 
 ; ---------------------------------------------------------------------------
-; read_pads: the pads of the frame (02 section 6). The input (src/input.s)
+; read_pads: the pads of the frame. The input (src/input.s)
 ; gives the held buttons of both pads in the original's bit order
 ; (input_pads); start and select count only in the frame they go down:
 ; while either stays down from a frame in which it counted, both are
@@ -184,7 +170,7 @@ read_pads:
 
 ; ---------------------------------------------------------------------------
 ; pause_check: start on pad 1 pauses or resumes the game, in the victory
-; mode or in the game core of the play mode (02 section 7). The pause takes
+; mode or in the game core of the play mode. The pause takes
 ; effect in the same frame.
 ;
 ; In:       mode, mode_task, pad_bits (pad 1), pause, pause_timer
@@ -232,7 +218,7 @@ pause_check:
         rts
 
 ; ---------------------------------------------------------------------------
-; step_timers: the timers and frame_count (02 section 4). timer_hold = n
+; step_timers: the timers and frame_count. timer_hold = n
 ; stops the timers and the interval counter for n - 1 frames. The frame
 ; timers count each frame, the slow timers when interval_count runs below 0
 ; (each 21 frames); a timer stays at 0. frame_count counts on while the
@@ -271,7 +257,7 @@ step_timers:
         rts
 
 ; ---------------------------------------------------------------------------
-; step_random: one step of the random bits (02 section 5): the seven bytes
+; step_random: one step of the random bits: the seven bytes
 ; are one 56-bit register with random+0 at its top; it shifts right by one
 ; bit, and bit 1 of byte 0 XOR bit 1 of byte 1 enters at the top. The bytes
 ; are rotated one by one: the register's bit order runs from byte 0 down to
@@ -297,8 +283,7 @@ step_random:
 
 ; ---------------------------------------------------------------------------
 ; hide_all_sprites, hide_sprites: every sprite of the list, or every sprite
-; but sprite 0 (the status split's marker), below the picture (02 section
-; 9.1). hide_all_sprites runs only while status_split is 0.
+; but sprite 0 (the status split's marker), below the picture. hide_all_sprites runs only while status_split is 0.
 ;
 ; In:       nothing
 ; Out:      the Y byte of the sprites = HIDDEN_Y
@@ -329,7 +314,7 @@ hide_from_x:
 
 ; ---------------------------------------------------------------------------
 ; sprite_shuffle: the objects' first sprites take turns at the front of the
-; sprite list (02 section 9.2). Each of sprite_offset's entries 0-14 that is
+; sprite list. Each of sprite_offset's entries 0-14 that is
 ; in the ring of sprites 10-63 (SHUFFLE_RING_START on) moves on by the
 ; step's amount; a sum past $FF adds SHUFFLE_RING_START more, so the offsets
 ; stay in the ring. The three amounts add up to the ring's size, so the
@@ -376,7 +361,7 @@ sprite_shuffle:
         clc
         adc #MISC_SPRITE_STEP
         sta sprite_offset+SPR_MISC+1,x
-        adc #MISC_SPRITE_STEP           ; no set passes $FF (02 section 9.2)
+        adc #MISC_SPRITE_STEP           ; no set passes $FF
         sta sprite_offset+SPR_MISC+2,x
         inx
         inx
@@ -387,8 +372,8 @@ sprite_shuffle:
         rts
 
 ; ---------------------------------------------------------------------------
-; mode_dispatch: the routine of the mode (02 section 10). The original's
-; jump routine leaves registers that no mode routine reads (02 section 10),
+; mode_dispatch: the routine of the mode. The original's
+; jump routine leaves registers that no mode routine reads,
 ; so the port's JMP leaves none on purpose.
 ;
 ; In:       mode (MODE_*)
@@ -412,7 +397,7 @@ mode_routines:
 
 ; ---------------------------------------------------------------------------
 ; clear_name_tables: both name tables blank (every cell BLANK_TILE, every
-; palette 0), list 1 empty, the scroll at 0 (02 section 12). The original
+; palette 0), list 1 empty, the scroll at 0. The original
 ; writes the picture chip at once, with the picture off; the port queues
 ; the clear among the screen records (src/packet.s packet_clear).
 ;

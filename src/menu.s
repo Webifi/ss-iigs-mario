@@ -7,11 +7,9 @@
 ; it. The DOC interrupt goes on (the clock, the sound tick, the input
 ; capture). The game's state stays; its frames do not run.
 ;
-; The screen (Second Sight reference, docs/09-host-protocol.md and
-; docs/05-z180.md, "Boot"): the card keeps its state and restarts its
+; The screen: the card keeps its state and restarts its
 ; firmware (src/secondsight/menu.s), which shows the Apple 40-column text
-; page in its own text mode, which it has for both monitors
-; (reference/video-modes.md), so the menu shows on every monitor. The firmware
+; page in its own text mode for both monitors. The firmware
 ; copies the IIgs writes of text page 1 into its own copy (SetShadow
 ; SS_SHADOW_ALL); the IIgs copies its bank-0 writes there to bank $E0 only
 ; while SHADOW_TEXT1 is off. The game keeps nothing in text page 1
@@ -21,61 +19,8 @@
 ;
 ; The Apple video switches ($C00C-$C00F, $C050-$C057) and the text colours
 ; ($C022) are Second Sight events: the menu writes them only while the
-; firmware runs, never while the card program receives packets
-; (docs/reference/z180-io-ports.md, "Apple event addresses").
+; firmware runs, never while the card program receives packets.
 ;
-; The pages (menuPage), with the keys that move between them:
-;   MP_MAIN     CONTROLS, DEVICES, SOUND, SAVE, RESUME. RETURN on the first
-;               three opens their page; ESC or RESUME leaves the menu.
-;   MP_GROUPS   PLAYER 1, PLAYER 2, MENU KEY, BACK: RETURN opens MP_ACTIONS.
-;   MP_ACTIONS  the actions of a group with their selected binding; UP and
-;               DOWN choose, RETURN opens MP_BINDING of the action; ESC or
-;               BACK: MP_GROUPS.
-;   MP_BINDING  one action: CHANGE (the next key replaces the binding), ADD
-;               (the next key is one more binding), REMOVE, NEXT BINDING,
-;               BOTH KEYBOARDS, BACK. While the menu waits for a key, ESC
-;               stops the wait.
-;   MP_DEVICES  J13 PLAY, SNES MAX SLOT, RECHECK JOYSTICK, JOYSTICK PLAYER,
-;               RESTORE DEFAULT BINDINGS, BACK: RETURN or RIGHT changes.
-;   MP_SOUND    MUSIC VOLUME, EFFECTS VOLUME, BACK: RETURN opens MP_LEVEL.
-;   MP_LEVEL    the levels 0 to MIX_LEVEL_MAX: RETURN sets the level (the
-;               sound takes it at once) and goes back to MP_SOUND.
-; A device gives its directions as the arrow keys and its buttons as RETURN.
-;
-; The firmware handshake (menu_open, menu_close): the menu packet, then
-; the firmware's idle handshake and GetStatus (firmware_wait), then each
-; command waits for SS_READY before its bytes (command_ready) and for
-; SS_PHASE_DONE after them (command_done); SetMode then for SS_DONE
-; (setmode_done). A card that does not answer within the bound stops the
-; game (src/game.s failed).
-;
-; The layout: the menu draws a page in menuText (MENU_ROWS x MENU_COLUMNS
-; characters), then menu_publish copies it to the centre of the text page.
-; MENU_MARK, the choice marker, becomes $55 there: the MouseText right
-; arrow (ALTCHAR on).
-;
-; Routines:
-;   options_menu        the menu: open, the loop of samples and keys, close
-;   menu_open           give the screen to the card's firmware
-;   menu_close          give the screen back to the card program
-;   monitor_sense       the monitor sense byte, for the clock at the start
-;   firmware_wait       wait for the firmware: its idle handshake, GetStatus
-;   command_ready, command_done, setmode_done  the command handshakes
-;   menu_key            a key on a page
-;   menu_binding_back   from a binding back to its action
-;   menu_device         a choice of MP_DEVICES
-;   menu_player_change  the joystick to the other player
-;   menu_bind           the key of the wait into a binding
-;   menu_unbind_key     the key of the wait out of the other bindings
-;   menu_selected_binding, menu_find_binding  the binding of an action
-;   menu_audio_key, menu_level_key  the sound pages
-;   menu_clear_apple    the text page all spaces
-;   menu_draw           draw a page: menu_draw_controls, menu_draw_binding,
-;                       menu_draw_devices, menu_draw_audio, menu_draw_level
-;   menu_footer, menu_draw_choices, menu_draw_marker, menu_list,
-;   menu_draw_boolean, menu_draw_level_number, menu_copy_binding_name,
-;   menu_name_offset, menu_put, menu_copy_name, menu_copy  the drawing parts
-;   menu_publish        menuText to the text page
 .a16
 .i16
 MENU_ROWS = 24               ; menuText: the rows of a page
@@ -141,7 +86,7 @@ MSG_SAVE_ERROR = 3
 FIRMWARE_ROUNDS = 256        ; firmware_wait: times SS_POLLS polls, about 1.5 minutes: the
                              ; bound of src/boot.s detect_secondsight for a firmware that starts
 MODE_ROUNDS = 8              ; setmode_done: times SS_POLLS polls, about 4 s: SetMode takes
-                             ; effect at a vertical blank (host-commands.md, SetMode)
+                             ; effect at a vertical blank
 PAD_PREFIX = 4               ; menu_pad_prefix: "PAD ", then the keypad character
 DECIMAL = 10                 ; the F keys: a number of one or two digits
 CASE_BIT = $20               ; ASCII: the bit that makes a letter lower case
@@ -304,6 +249,13 @@ options_menu:
 ; Keeps:    D, DBR
 ; Original: none
 ; ---------------------------------------------------------------------------
+; The firmware handshake (menu_open, menu_close): the menu packet, then
+; the firmware's idle handshake and GetStatus (firmware_wait), then each
+; command waits for SS_READY before its bytes (command_ready) and for
+; SS_PHASE_DONE after them (command_done); SetMode then for SS_DONE
+; (setmode_done). A card that does not answer within the bound stops the
+; game (src/game.s failed).
+;
 menu_open:
   ; The game's video switches and colours, for menu_close.
   a8
@@ -447,11 +399,10 @@ monitor_sense:
 
 ; ---------------------------------------------------------------------------
 ; firmware_wait: wait for the card's firmware after the menu packet, or at
-; the start. The firmware writes 0 to the handshake when it starts
-; (docs/05-z180.md, "Boot"); until then the card shows the token of the menu
-; packet. A command before that 0 would be lost: the firmware's write
-; acknowledges a pending event (docs/14-custom-code.md, "Signals between
-; the two programs"). Then GetStatus (as src/boot.s detect_secondsight,
+; the start. The firmware writes 0 to the handshake when it starts; until
+; then the card shows the token of the menu packet. A command before that
+; 0 would be lost: the firmware's write acknowledges a pending event.
+; Then GetStatus (as src/boot.s detect_secondsight,
 ; with its wait): one dummy read, SS_STATUS_SIZE bytes, the signature
 ; "GSVGA" and the count SS_STATUS_BYTES; then the end of its phase. A card
 ; that does not answer stops the game (src/game.s failed).
@@ -602,6 +553,24 @@ setmode_done:
 ; Original: none
 ; ---------------------------------------------------------------------------
 .a16
+; The pages (menuPage), with the keys that move between them:
+;   MP_MAIN     CONTROLS, DEVICES, SOUND, SAVE, RESUME. RETURN on the first
+;               three opens their page; ESC or RESUME leaves the menu.
+;   MP_GROUPS   PLAYER 1, PLAYER 2, MENU KEY, BACK: RETURN opens MP_ACTIONS.
+;   MP_ACTIONS  the actions of a group with their selected binding; UP and
+;               DOWN choose, RETURN opens MP_BINDING of the action; ESC or
+;               BACK: MP_GROUPS.
+;   MP_BINDING  one action: CHANGE (the next key replaces the binding), ADD
+;               (the next key is one more binding), REMOVE, NEXT BINDING,
+;               BOTH KEYBOARDS, BACK. While the menu waits for a key, ESC
+;               stops the wait.
+;   MP_DEVICES  J13 PLAY, SNES MAX SLOT, RECHECK JOYSTICK, JOYSTICK PLAYER,
+;               RESTORE DEFAULT BINDINGS, BACK: RETURN or RIGHT changes.
+;   MP_SOUND    MUSIC VOLUME, EFFECTS VOLUME, BACK: RETURN opens MP_LEVEL.
+;   MP_LEVEL    the levels 0 to MIX_LEVEL_MAX: RETURN sets the level (the
+;               sound takes it at once) and goes back to MP_SOUND.
+; A device gives its directions as the arrow keys and its buttons as RETURN.
+;
 menu_key:
   ; The key: a keyboard key as it is; a device direction as an arrow key,
   ; a device button as RETURN.
@@ -1267,6 +1236,11 @@ menu_clear_apple:
 ; Keeps:    D, DBR
 ; Original: none
 ; ---------------------------------------------------------------------------
+; The layout: the menu draws a page in menuText (MENU_ROWS x MENU_COLUMNS
+; characters), then menu_publish copies it to the centre of the text page.
+; MENU_MARK, the choice marker, becomes $55 there: the MouseText right
+; arrow (ALTCHAR on).
+;
 menu_draw:
   a8
   lda #' '

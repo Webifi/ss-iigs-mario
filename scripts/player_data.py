@@ -1,99 +1,80 @@
-"""The player's tables (document 04), read from the program and written in
-the forms that src/game/player.s reads.
+"""Prepare the player movement and area-entry tables for the IIgs game.
 
-Every blob goes into bank 0 (GAMEDATA) with its own label: the player's
-code runs each frame and reads its tables with absolute addresses (DBR =
-bank 0). No value of a table is typed here: each one is read at the
-address that document 04 gives ("Movement tables", "The player tasks").
-
-ROM tables read (address, size, format; all bytes):
-- gravity_held_by_kind $B424, 7: the gravity while A is held in a rise,
-  1/256 pixel each frame, added to the Y speed each frame; by jump kind
-  (0-4 the jumps by run speed, 5 the swim stroke, 6 the stroke in a
-  whirlpool).
-- gravity_fall_by_kind $B42B, 7: the fall gravity after it, the same unit.
-- jump_speed_by_kind $B432, 7: the start Y speed's whole pixels, signed
-  (up is negative); jump_fraction_by_kind $B439, 7: its fraction, 1/256
-  pixel.
-- left_speed_limits $B440, 3, and right_speed_limits $B443, 4: the X
-  speed's limits, signed, 1/16 pixel each frame, by speed class (0 run, 1
-  walk, 2 water; right entry 3 the entry walk).
-- friction_by_class $B447, 3: the friction's low byte (its high byte is
-  0), 1/4096 pixel each frame, by friction class.
-- climb_y_speeds $B44A, 3: the climb's Y speed in whole pixels, signed;
-  climb_y_forces $B44D, 3: its fraction; by 0 still, 1 up, 2 down.
-- anim_rate_by_speed $B58C, 3: frames per walk picture, by picture class.
-- vine_side_shift_low $B3C7, 4, and vine_side_shift_high $B3CB, 4: the low
-  and high bytes of a signed X shift in pixels, by shift index (0 right
-  held facing right, 1 right held facing left, 2 left held facing right,
-  3 left held facing left).
-- edge_x_inset $B034, 2: pixels inside the screen's left and right edge;
-  edge_return_pad $B036, 2: the pad's direction bit back into the screen
-  at each edge.
-- hidden_life_coin_goals $B2C2, 8: coins (a binary count) by world.
-- start_x_by_entry $9116, 4: X in the page, by entrance_alt.
-- alt_entry_y_index $911A, 2: the start row of entrance_alt 2 and 3.
-- start_y_by_entry $911C, 9: the start row's Y, by row 0-8.
-- start_priority_by_entry $9125, 8: the start row's sprite attribute byte,
-  by row 0-7. The original reads row 8 one byte past the table: the first
-  byte of timer_start_hundreds, $912D (04 leftover 7, 03 L2), whose time
-  entries scripts/collision_data.py reads for the game timer.
-
-The forms written (labels, in this order):
-- gravity_held_by_kind, gravity_fall_by_kind: 7 bytes each, as read.
-- jump_start_speeds: 7 words, the start Y speed as one signed 8.8 word
-  (the whole pixels high, the fraction low), by kind.
-- left_speed_limits (3 bytes), right_speed_limits (4 bytes): as read.
-- friction_by_class: 3 words, the friction (high byte 0), by class.
-- climb_speeds: 3 words, the climb's Y speed as one signed 8.8 word.
-- anim_rate_by_speed: 3 bytes, as read.
-- vine_side_shifts: 4 words, the signed shift, by shift index.
-- edge_x_inset, edge_return_pad: 2 words each (the byte, high byte 0), by
-  edge: player.s indexes them with the word index of the screen's edges.
-- hidden_life_coin_goals: 8 bytes, as read.
-- start_x_by_entry (4 bytes), alt_entry_y_index (2 bytes),
-  start_y_by_entry (9 bytes): as read.
-- start_priority_by_entry: 9 bytes, rows 0-7 and the leftover row 8.
+scripts/assets.py passes build() the 32 KB program ROM and a host-data
+writer. The addresses below refer to the original program, whose $8000 is
+byte zero of that ROM. The writer places the results in bank 0 for
+src/game/player.s. Some source tables contain separate high and low bytes;
+build() joins them into little-endian words used by the 65816 code.
 """
 
 PROGRAM_BASE = 0x8000  # the program is $8000-$FFFF
 
-# ---- The tables (document 04 "Movement tables"): address, size ------------
+# ---- The tables : address, size ------------
+# Gravity while the jump button is held. Each byte adds 1/256 pixel per
+# frame to vertical speed. Kinds 0-4 are jumps at different run speeds;
+# 5 is a swim stroke and 6 is a stroke in a whirlpool.
 GRAVITY_HELD_BY_KIND = 0xB424  # 7: set_player_forces
+# Gravity after the held phase, in the same units and jump-kind order.
 GRAVITY_FALL_BY_KIND = 0xB42B  # 7: set_player_forces
+# Initial vertical speed, split into signed whole pixels and fractions of
+# 1/256 pixel. Negative speed moves up. build() combines each pair into
+# one signed 8.8 word for each of the seven jump kinds.
 JUMP_SPEED_BY_KIND = 0xB432  # 7: set_player_forces, the whole pixels
 JUMP_FRACTION_BY_KIND = 0xB439  # 7: set_player_forces, the fraction
 JUMP_KINDS = 7  # kinds 0-4 the jumps, 5 the stroke, 6 the stroke in a whirlpool
+# Signed horizontal speed limits in 1/16 pixel per frame. The first three
+# classes are running, walking and water; the right table also has a limit
+# for the entrance walk.
 LEFT_SPEED_LIMITS = 0xB440  # 3: pick_speed_limits
 RIGHT_SPEED_LIMITS = 0xB443  # 4: pick_speed_limits (entry 3: the entry walk)
 SPEED_CLASSES = 3  # run, walk, water
+# Fractional friction for the three speed classes, in 1/4096 pixel per
+# frame. The ROM stores the low byte; build() supplies a zero high byte.
 FRICTION_BY_CLASS = 0xB447  # 3: pick_speed_limits
 FRICTION_CLASSES = 3
+# Climb speed as signed whole pixels and 1/256-pixel fractions. The three
+# entries are standing still, climbing up and climbing down; build() joins
+# each pair of bytes into one signed 8.8 word.
 CLIMB_Y_SPEEDS = 0xB44A  # 3: set_player_forces, the whole pixels
 CLIMB_Y_FORCES = 0xB44D  # 3: set_player_forces, the fraction
 CLIMB_MOVES = 3  # still, up, down
+# Frames per walking animation picture for the three speed classes.
 ANIM_RATE_BY_SPEED = 0xB58C  # 3: store_anim_rate
 ANIM_CLASSES = 3
+# Signed pixel shifts for changing sides of a vine. The entries are: right
+# held while facing right, right held while facing left, left held while
+# facing right, and left held while facing left. Low and high bytes become
+# four signed words.
 VINE_SIDE_SHIFT_LOW = 0xB3C7  # 4: move_climbing
 VINE_SIDE_SHIFT_HIGH = 0xB3CB  # 4: move_climbing
 VINE_SHIFTS = 4
+# Pixels inside the left and right screen edges, followed by the direction
+# button that returns the player from each edge. build() expands each byte
+# to a word because player.s indexes the edge tables with a word index.
 EDGE_X_INSET = 0xB034  # 2: hold_player_in_screen
 EDGE_RETURN_PAD = 0xB036  # 2: hold_player_in_screen
 EDGES = 2  # left, right
+# Coin counts required to show the hidden 1-up block, one per world.
 HIDDEN_LIFE_COIN_GOALS = 0xB2C2  # 8: end_level_walk
 WORLDS = 8
 
-# ---- The entry tables (document 04 setup_entry_and_timer, 03 section 4.9) --
+# ---- The entry tables  --
+# Initial X within the page for entrance_alt values 0-3.
 START_X_BY_ENTRY = 0x9116  # 4: by entrance_alt 0-3
 ENTRANCE_ALTS = 4
+# Start-row indexes for entrance_alt values 2 and 3.
 ALT_ENTRY_Y_INDEX = 0x911A  # 2: the rows of entrance_alt 2 and 3
 ALT_ROWS = 2
+# Initial Y for each of nine start rows.
 START_Y_BY_ENTRY = 0x911C  # 9: rows 0-7 (entrance 0-7) and row 8
 START_ROWS = 9
+# Sprite attributes for start rows 0-7. The original also reads row 8,
+# one byte past this table, from the first game-timer value at $912D.
 START_PRIORITY_BY_ENTRY = 0x9125  # 8: rows 0-7
 PRIORITY_ROWS = 8
 # Row 8 of start_priority_by_entry: the original reads it one byte past its
-# 8 rows, from the first byte of timer_start_hundreds (04 leftover 7).
+# 8 rows, from the first byte of timer_start_hundreds. The checked ROM
+# has $20 at $912D; the following bytes are $04, $03 and $02.
 START_PRIORITY_ROW_8 = 0x912D
 
 
@@ -102,6 +83,7 @@ def build(program, host):
     $8000 = offset 0."""
     assert len(program) == 0x8000
 
+    # Read SIZE bytes from the program ROM starting at ADDRESS.
     def run(address, size):
         return bytes(program[address - PROGRAM_BASE + i] for i in range(size))
 

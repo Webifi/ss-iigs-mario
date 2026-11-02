@@ -1,5 +1,5 @@
 ; The packet to the card: the original's picture chip work at the start of
-; each frame (document 02, steps 2-6 and 14), sent to the card as one packet
+; each frame, sent to the card as one packet
 ; (src/packet_layout.inc).
 ;
 ; Each frame, packet_frame:
@@ -7,7 +7,7 @@
 ;      list 2, or a ROM record list of screen_rom_lists) to the pending
 ;      records, a queue in PENDING_WRITES: the bytes from pending_head to
 ;      pending_length; then empties the list sent, or list 1 for any other
-;      source, as the original empties its write lists (02 section 11.4);
+;      source, as the original empties its write lists;
 ;   2. if the card shows the token of its free receive buffer, gives the
 ;      token's phase of the packet before to the clock (src/clock.s
 ;      clock_phase), then sends a packet: the flags, the scroll, the visible
@@ -15,13 +15,13 @@
 ;      whole records as fit the packet.
 ; It runs before the logic of the frame, so the packet holds the state that
 ; the logic of the frame before left: the original's picture N shows the
-; state after logic N-1 (02 section 2).
+; state after logic N-1.
 ; The token is READY_TOKEN, with the buffer in bit 0 and the phase in the
 ; bits of TOKEN_EARLY and TOKEN_PHASE (src/secondsight/picture.s); the
 ; firmware's handshake values never have bit 6 set.
-; The game logic never waits for the card. A card that is still drawing
-; gets no packet this frame; a frame with more records than a packet holds
-; (a level start: the clear and a whole new screen) sends them over the next
+; A card that is still drawing gets no packet in the usual frame path. If
+; a frame has more records than one packet holds (a level start, for example),
+; the remaining records go over the next
 ; packets. While records wait in the queue, the packets keep the background
 ; and the sprites off, so the screen never shows a picture that has only
 ; some of them. Only a full queue makes the game wait for the card
@@ -157,7 +157,7 @@ packet_frame:
         jsr add_records
 ; Empty the list sent, or list 1 for every other source (the original's
 ; step 5): the records that list 1 holds when a ROM list goes are lost, as
-; in the original (02 section 11.4, rule 2).
+; in the original.
         lda screen_source
         cmp #SOURCE_LIST_2
         bne @empty_1
@@ -195,7 +195,7 @@ packet_frame:
 
 ; ---------------------------------------------------------------------------
 ; packet_clear: the original's direct clear of both name tables
-; (clear_name_tables, 02 section 12): a REC_CLEAR record in the queue, at
+; (clear_name_tables): a REC_CLEAR record in the queue, at
 ; its place among the records. The original writes the chip at once,
 ; outside the frame's send; the queue keeps that order.
 ;

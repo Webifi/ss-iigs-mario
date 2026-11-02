@@ -1,7 +1,7 @@
-; The boot loader: the file SSMARIO.SYSTEM. bootloader/boot0.s loads it to
-; SYSTEM_LOAD and starts it in emulation mode with X = the ProDOS unit of
-; the boot drive. It loads the whole game before the game runs; the game
-; never reads the disk again, except the settings save.
+; The boot loader, SSMARIO.SYSTEM. bootloader/boot0.s loads it and starts it
+; in emulation mode with the boot drive's ProDOS unit in X. It loads the
+; game into host and Second Sight memory before starting game.s. The game
+; reads the disk again only when saving settings.
 ;
 ; The steps:
 ;   1. boot (BOOT segment, 6502 code): a machine that is not a IIgs shows a
@@ -21,80 +21,9 @@
 ;      then JML to the game's handoff (src/game.s game_handoff).
 ; The progress bar fills with the bytes of SSMARIO.DATA read (load_progress).
 ;
-; Data in: SSMARIO.DATA, SSMARIO.CONFIG (bootloader/prodos_read.s reads
-; them through the block driver of the boot slot). Data out: the game's
-; segments in host RAM; the card's startup records in card memory; the
-; settings at INPUT_SETTINGS; the driver, unit, block and SmartPort entry
-; of the settings save at INPUT_SAVE_* (build/game-disk/boot_settings.inc
-; gives these addresses of the game's link).
-;
-; The card's screen during the load (the text mirror):
-;   state    what the card shows                   the event that ends it
-;   MIRROR   the firmware's text emulation draws    load_secondsight starts:
-;            the Apple text page from its copy (the SetShadow SS_SHADOW_NONE,
-;            copy is on from the card's start): the then freeze_mirror sets
-;            loading screen and the bar of          SetMode native
-;            draw_progress                          (mirror_disabled)
-;   FROZEN   the last text image: the firmware      the first record with
-;            draws nothing; mirror_progress puts    RECORD_FINAL_SRAM
-;            the bar cells into its text video RAM  (mirror_final)
-;   FINAL    the last text image; the bar stops     the first record with
-;                                                   RECORD_FINAL_VRAM
-;                                                   (video_final)
-;   BLANK    ScreenOff before each upload: the text the card program sets
-;            video RAM becomes the game's           its game mode at its
-;                                                   entry (src/secondsight)
-; mirror_frozen: 1 while the VGA upload registers are set; each upload
-; clears it and sets them again (freeze_mirror), because a disk read can
-; make the card set its mode again (erratum E29, below).
-;
-; Hardware rules:
-;   - IDROUTINE ($FE1F), called with the carry set, clears the carry only
-;     on a IIgs (Apple IIgs Firmware Reference, p. 250).
-;   - The block driver: emulation mode, page zero and the page-one stack of
-;     bank 0, and it may change any of page zero (bootloader/prodos_read.s).
-;   - The Second Sight commands (Second Sight reference,
-;     docs/reference/host-commands.md): GetStatus, SetShadow, SetMode,
-;     SetVGAReg, UploadData, ScreenOff. UploadData writes through the VGA
-;     CPU write path as the registers set it; an upload must not cross video
-;     $80000: scripts/boot_disk.py gives each video record a plane offset
-;     below $40000 and at most DATA_BUFFER_SIZE bytes.
-;   - Erratum E29 of the card's ROM 1.4 (docs/reference/errata.md): with
-;     the text emulation off, an Apple display switch makes the card set
-;     its SetMode mode again: SetVGAReg changes are lost and a ScreenOff is
-;     undone. The disk firmware may set the display switches, so the
-;     loader sets the upload registers again after each disk read and
-;     sends ScreenOff again after the last.
-;   - The card copies the IIgs's writes to the graphics pages of banks
-;     $E0/$E1 into its SRAM (docs/reference/z180-memory-map.md, SRAM
-;     ownership), so the loader stops the IIgs's copy of those pages to
-;     $E0/$E1 (SHADOW_GRAPHICS) once the card's own data loads.
-;
-; Routines:
-;   boot               the IIgs check, then the move to BOOT_LOADER
-;   loader             the load, then the handoff to the game
-;   read_block         read bytes of SSMARIO.DATA into DATA_BUFFER
-;   load_settings      SSMARIO.CONFIG over the settings image
-;   locate_smartport   the SmartPort entry and unit of the boot slot
-;   load_secondsight   the card startup records into the card
-;   wait_ready, wait_done  the handshake of a card command
-;   startup_unpack     unpack a record (src/boot_unpack.s)
-;   detect_secondsight the card's GetStatus and its signature
-;   check_memory       the fast RAM banks; memory_probe_word,
-;                      memory_bank_found, memory_bank_bit its parts
-;   firmware_banks     the firmware's count of the fast RAM
-;   memory_details     the RAM lines of the memory error screen;
-;                      memory_hex, memory_kilobytes its digits
-;   boot_screen        the loading screen
-;   clear_text         the text page all spaces
-;   black_screen       the text page blank for the game
-;   load_progress      count the bytes read, then draw the bar
-;   draw_progress      the bar on the Apple text page
-;   mirror_progress    the bar in the card's text video RAM
-;   freeze_mirror      the text mirror off; the VGA upload registers
-;   text_emulation     SetMode 40-column text, emulation on or off
-;   unsupported_driver, no_memory, no_secondsight, failed, requirement_error
-;                      the error screens
+; SSMARIO.DATA contains game segments and card startup records.
+; SSMARIO.CONFIG contains the saved settings. The loader also records the
+; boot drive's block-driver and SmartPort entries for later settings saves.
 .setcpu "65816"
 .include "w65c816.inc"
 .include "iigs.inc"
@@ -122,6 +51,9 @@ DETAIL_COLUMN = 4                 ; the RAM lines of the memory error (rows 13-1
 LOADING_LENGTH = 7                ; "LOADING" (row 21), centred
 LOADING_COLUMN = (TEXT_COLUMNS-LOADING_LENGTH)/2
 .assert TEXT_PAGE_SIZE = 4*PAGE, error ; the four stores of the clear loops
+
+; IDROUTINE ($FE1F), called with the carry set, clears the carry only
+; on a IIgs (Apple IIgs Firmware Reference, p. 250).
 
 ; ---------------------------------------------------------------------------
 ; boot: the entry of SSMARIO.SYSTEM. A machine that is not a IIgs gets a
@@ -541,6 +473,9 @@ failed_native:
 failed_far:
   jmp failed
 
+; The block driver: emulation mode, page zero and the page-one stack of
+; bank 0, and it may change any of page zero (bootloader/prodos_read.s).
+
 ; ---------------------------------------------------------------------------
 ; read_block: read read_request bytes of SSMARIO.DATA, from its mark, into
 ; DATA_BUFFER, then count them on the progress bar (load_progress).
@@ -730,13 +665,48 @@ smart_unit: .byte 0          ; locate_smartport: the SmartPort unit
 smart_slot: .byte 0          ; locate_smartport: the slot of the driver, x 16
 smart_entry: .word 0         ; locate_smartport: the SmartPort entry
 
+; The card's screen during the load (the text mirror):
+;   state    what the card shows                   the event that ends it
+;   MIRROR   the firmware's text emulation draws    load_secondsight starts:
+;            the Apple text page from its copy (the SetShadow SS_SHADOW_NONE,
+;            copy is on from the card's start): the then freeze_mirror sets
+;            loading screen and the bar of          SetMode native
+;            draw_progress                          (mirror_disabled)
+;   FROZEN   the last text image: the firmware      the first record with
+;            draws nothing; mirror_progress puts    RECORD_FINAL_SRAM
+;            the bar cells into its text video RAM  (mirror_final)
+;   FINAL    the last text image; the bar stops     the first record with
+;                                                   RECORD_FINAL_VRAM
+;                                                   (video_final)
+;   BLANK    ScreenOff before each upload: the text the card program sets
+;            video RAM becomes the game's           its game mode at its
+;                                                   entry (src/secondsight)
+; mirror_frozen: 1 while the VGA upload registers are set; each upload
+; clears it and sets them again (freeze_mirror), because a disk read can
+; make the card set its mode again (erratum E29, below).
+;
+; The Second Sight commands: GetStatus, SetShadow, SetMode,
+; SetVGAReg, UploadData, ScreenOff. UploadData writes through the VGA
+; CPU write path as the registers set it; an upload must not cross video
+; $80000: scripts/boot_disk.py gives each video record a plane offset
+; below $40000 and at most DATA_BUFFER_SIZE bytes.
+; The card's ROM 1.4 has an erratum: with
+; the text emulation off, an Apple display switch makes the card set
+; its SetMode mode again: SetVGAReg changes are lost and a ScreenOff is
+; undone. The disk firmware may set the display switches, so the
+; loader sets the upload registers again after each disk read and
+; sends ScreenOff again after the last.
+; The card copies the IIgs's writes to the graphics pages of banks
+; $E0/$E1 into its SRAM, so the loader stops the IIgs's copy of those pages to
+; $E0/$E1 (SHADOW_GRAPHICS) once the card's own data loads.
+;
+
 ; ---------------------------------------------------------------------------
 ; load_secondsight: the card startup records of SSMARIO.DATA into the card
 ; (data_file.inc): its program, its tables and its art. Each record fits
 ; DATA_BUFFER (scripts/boot_disk.py boot_uploads); a packed record is
 ; unpacked to STARTUP_UNPACK_OUTPUT first. The game keeps no copy of these
-; bytes in host RAM. The text mirror moves through its states (the file
-; header) on the way.
+; bytes in host RAM. The text mirror moves through the states listed above.
 ;
 ; For each record: its header, then its bytes (the disk read comes first:
 ; the disk firmware may set the Apple display switches), then the upload
@@ -996,7 +966,7 @@ send_limit: .res 2           ; load_secondsight: amount rounded down to whole pa
 .i8
 
 ; ---------------------------------------------------------------------------
-; detect_secondsight: the card's GetStatus (host-commands.md): one dummy
+; detect_secondsight: the card's GetStatus: one dummy
 ; read, then SS_STATUS_SIZE bytes. The card is there when the signature
 ; "GSVGA" and the count SS_STATUS_BYTES agree. The loader opens no file
 ; before this check.
@@ -1552,8 +1522,7 @@ clear_text:
 ; black_screen: the text page all spaces, which the colours of boot_screen
 ; show black, so the IIgs display stays blank through the play (the game
 ; keeps the text page out of bank $E0, src/game.s) and after the menu. The
-; colours stay: a TBCOLOR write is a Second Sight event (Second Sight
-; reference, docs/reference/z180-io-ports.md, "Apple event addresses"),
+; colours stay: a TBCOLOR write is a Second Sight event,
 ; which the card program's DMA would take as a packet byte.
 ;
 ; In:       emulation mode

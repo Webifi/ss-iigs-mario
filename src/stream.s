@@ -11,9 +11,7 @@
 ; word first, so the card receives each byte pair swapped and swaps it back
 ; (src/secondsight/stream.s stream_take).
 ;
-; Hardware rules (Second Sight reference, docs/09-host-protocol.md, "One
-; command, step by step", and docs/14-custom-code.md, "In through event
-; bytes and DMA1", "Speeds"):
+; Hardware rules:
 ;   - During a DMA phase each write to any of $C0B0-$C0B7 is one data byte
 ;     of the card's DMA channel 1; RDY holds the 65816 until the card has
 ;     taken the byte before, so no byte is lost.

@@ -1,245 +1,35 @@
-; The enemies (document 05b): the routine that runs each enemy kind in each
-; frame after its start, with its moves, its timers and its rules: the
-; walkers and their shells, the hammer brother, the paratroopas, the
-; blooper, the cheep-cheeps, Lakitu and his spinies, the piranha plant, the
-; podoboo, the bullet bill of a wave, the fire bars, Bowser with his bridge
-; and his flames, the castle flag and its fireworks, the retainer, the
-; lifts, and the bounds that erase an enemy far off the screen.
+; Enemy behavior, including movement, attacks, lifts and boss sequences.
+; movement.s calls the routine for each active enemy slot in game_core.
+; These routines read and update the records in state.inc, call collision.s
+; for hits and sprites.s for drawing, and use tables built by
+; scripts/enemies_data.py. They also queue sounds, scores and screen changes.
 ;
-; Place in the game. The enemy slot loop of the objects part (05a
-; enemies_and_loops and run_enemy_slot, src/game/movement.s) runs each
-; active enemy slot, 0 to 5 in order, once each frame of the game core
-; (03), and calls the run routine of the slot's kind with D = the slot's
-; record:
-;   kinds $00-$14   run_ordinary_enemy (it picks the kind's move)
-;   $15             run_bowser_fire
-;   $16             animate_fireworks
-;   $1B-$22         run_fire_bar
-;   $24-$2A         run_large_lift (it picks the lift's move)
-;   $2B, $2C        run_small_lift
-;   $2D             bowser_actions
-;   $31             run_castle_flag
-;   $35             run_rescued_person
-; The victory mode (03) runs bridge_collapse_task as its first task. The
-; objects part also calls clear_enemy_slot, erase_all_enemies,
-; check_enemy_in_bounds, move_ordinary_enemy and move_leaper (the power-up)
-; and next_flame_gap (the flame wave's start); the collision part calls
-; launch_hammer_bro_jump (a hammer brother at a wall); the drawing calls
-; clear_enemy_slot (an enemy below the screen). The original's spiny egg
-; start also calls measure_player_gap, with no effect (05a L5).
+; Ordinary enemies are drawn and tested before moving, so collisions use the
+; position from the previous move. Frame timers advance each frame; slow
+; timers advance every 21 frames. Positions contain a fractional byte and a
+; two-byte position; vertical speed is a signed 8.8 word.
 ;
-; What comes in: the records (state.inc Object), the frame and slow timers
-; and the random bits (02: stepped before the game logic of the frame), the
-; player's record, the screen edges, hard_mode, hard_mode_2, the world, and
-; the tables of scripts/enemies_data.py. What goes out: the records; the
-; sprite list for the fire bar balls, Bowser's flame and the castle flag
-; (the other kinds draw through the sprites part); the wave kind
-; (frenzy_kind, 05a); the sound commands (snd_*_queue: they sound in the next
-; frame, 02 section 2); the score and time digits (07); the screen records
-; of the bridge pieces and the balance lift ropes (list 1, 02 section 11).
-; No hardware.
-;
-; Order and counts. Each frame keeps the original's order (05b section 26):
-; an ordinary enemy is drawn and tested before it moves, so its sprites and
-; collisions use the place after the move of the frame before; a timer that
-; a routine sets steps from the next frame; every count is in frames or slow
-; ticks (21 frames) as the original's.
-;
-; Numbers. An X position is the record's fraction byte and the word x_pos
-; (page x 256 + pixel); a Y position is the fraction byte and the word y_pos
-; (Y high x 256 + row); the Y speed is the signed 8.8 word y_speed. Where the
-; original adds or subtracts these one byte at a time with the carry from
-; byte to byte, the 16-bit add or subtract here gives the same bytes and the
-; same carry; each header says where. Rules that the original works on the
-; low byte only (05b L12) stay 8-bit.
-;
-; Routines (the original's name and address in each header):
-;   run_rescued_person      the retainer or the princess; each half of Bowser
-;   run_ordinary_enemy      kinds $00-$14: draw, test, move, bounds
-;   move_enemy_by_kind      the move of kinds $00-$14 (move_nothing: none)
-;   run_bowser_fire         a flame of Bowser or of the flame wave
-;   run_fire_bar            a fire bar
-;   run_small_lift          a small lift of a lift line
-;   run_large_lift          a large lift (large_lift_steps: its move)
-;   clear_enemy_slot        an enemy slot empty
-;   erase_all_enemies       enemy slots 0-4 empty, no wave
-;   check_enemy_in_bounds   the erase far left or right of the screen
-;   move_lava_ball          the podoboo
-;   drive_hammer_bro        the hammer brother: its throws and its jumps
-;   launch_hammer_bro_jump  its jump
-;   walk_hammer_bro         its sway and its facing
-;   move_ordinary_enemy     a walker by its state (drop_defeated_enemy: a fall)
-;   move_leaper             the leaping paratroopa
-;   move_red_paratroopa     the red paratroopa
-;   move_flying_paratroopa  the flying paratroopa
-;   count_x_moves           the X counters of a swaying object
-;   move_by_counters        the sideways move by the X counters
-;   move_squid              the blooper (swim_squid: its stroke)
-;   fly_bullet_bill         the bullet bill of a wave
-;   swim_fish               a swimming cheep-cheep
-;   swoop_fish              a flying cheep-cheep
-;   move_cloud_rider        Lakitu (measure_player_gap: his speed)
-;   bob_piranha             the piranha plant
-;   spin_and_draw_fire_bar  a fire bar's turn, its balls and their test
-;   draw_fire_bar_pieces    one ball (check_fire_piece: its test)
-;   bridge_collapse_task    the victory mode's first task: the bridge falls
-;   bowser_actions          Bowser (bowser_gravity_hammers, bowser_breath_step)
-;   draw_whole_bowser       both halves of Bowser (draw_bowser_half: one)
-;   next_flame_gap          the next gap of the flame cycle
-;   fly_bowser_flame        a flame's flight and its sprites
-;   animate_fireworks       a firework
-;   run_castle_flag         the castle flag's steps (pick_firework_count,
-;                           award_time_bonus, add_end_points,
-;                           raise_castle_flag, draw_castle_flag,
-;                           wait_for_area_end)
-;   run_scale_lift          a pair of balance lifts (move_partner_lift,
-;                           queue_lift_rope, start_lift_fall, stop_lifts,
-;                           drop_both_lifts, scale_partner,
-;                           place_player_on_lift)
-;   run_vertical_lift       the lift that moves up and down
-;   carry_player_on_lift    the player stays on a large lift
-;   run_horizontal_lift     the lift that sways sideways
-;   shift_player_with_lift  the player moves with a lift
-;   run_drop_lift           the lift that drops under the player
-;   run_right_lift          the lift that moves right under the player
-;   move_big_lift           a large lift of a lift line
-;   move_small_lift         a small lift of a lift line
-;   move_lift_vertically    the move of a lift of a lift line
-;
-; Merged: count_x_moves_green ($CB45) is the maximum's load in
-; move_flying_paratroopa; turn_fire_bar ($D410) and the original's first
-; and unused call of fire_bar_piece_offset (L3) are steps of
-; spin_and_draw_fire_bar, and fire_bar_piece_offset is the build-time table
-; fire_bar_pieces; hide_far_fire_piece ($CDE6) is a step of
-; draw_fire_bar_pieces and compare_fire_piece ($CE32) of check_fire_piece;
-; bowser_goto_flames ($D139) is a branch; draw_partner_rope ($D4FF) and
-; finish_rope_record ($D530) are steps of move_partner_lift; store_lift_carry
-; ($D628) is a step of shift_player_with_lift; carry_player_small_lift
-; ($D671) is a step of move_small_lift. The port's own: scale_partner,
-; place_player_on_lift. The original's second calls of
-; check_enemy_offscreen and enemy_screen_position in run_bowser_fire, and
-; its second enemy_screen_position in run_small_lift, give the same values
-; as the first and are not made (05b section 28).
-;
-; Register widths: A8 I8 at each entry and exit unless a header says
-; otherwise; 16-bit work between rep and sep inside a routine. DBR = bank 0.
-; D = the enemy's record (state.inc Object) in every routine whose header
-; does not say otherwise; a routine that works on another
-; record (Bowser's rear half, a balance lift's partner, the lift the player
-; stands on) sets D to it and takes the caller's D back before it returns.
-; The routines of other parts that this file calls keep D (each call says
-; what it expects).
-;
-; ---- The state byte of the walking enemies (Object::state, 05b section 4) --
-;
-; | Bits          | Meaning                                       | Set by |
-; |---------------|-----------------------------------------------|--------|
-; | 7             | a kicked shell (or the power-up's move)       | 07, 05a |
-; | 6             | a bit-7 object in the air                     | 07 |
-; | 5             | defeated: it falls off the screen             | 07 |
-; | 3             | the hammer brother shows its throw            | drive_hammer_bro; run_hammer (05a) clears it |
-; | 0-2 = 0       | walking                                       | 05a, the revive here |
-; | 0-2 = 1       | in the air (a hammer brother's jump: bit 0)   | 07, launch_hammer_bro_jump |
-; | 0-2 = 2       | knocked up by a block: falls at its full speed | 07 |
-; | 0-2 = 3       | stunned after a knock                         | 07 |
-; | 0-2 = 4       | stomped: a shell, or a flat goomba            | 07 |
-; | 0-2 = 5       | a spiny's egg                                 | 05a |
-;
-; | State of a walker | Each frame (move_ordinary_enemy)            | Leaves when |
-; |-------------------|---------------------------------------------|-------------|
-; | walking           | moves by its X speed                        | 07 changes it |
-; | in the air (1, 2) | falls (drop_enemy_fast) at its X speed       | 07 lands it |
-; | stunned, stomped  | still                                       | its slow timer ends: walks at 8 (12 in hard_mode) units |
-; | flat goomba       | still                                       | its slow timer reads $0E: erased |
-; | kicked shell      | its X speed; in the air 24 units slower      | 07 |
-; | defeated          | falls at its X speed                        | the drawing erases it below the screen (11) |
-; | spiny's egg       | falls (pull $20) at its X speed             | 07 makes it a spiny when it lands |
-;
-; ---- The kinds' own values in the record's shared bytes --------------------
-;
-; | Bytes (Object)     | Kind values                                            |
-; |--------------------|--------------------------------------------------------|
-; | x_fraction         | paratroopa_start_y, lift_top_y                         |
-; | y_fraction         | piranha_high_y, flame_height (an index of bowser_flame_heights) |
-; | x_speed            | paratroopa_middle_y, lift_middle_y, cheep_move,        |
-; |                    | piranha_speed, firebar_angle_low, firework_step,       |
-; |                    | squid_swim_speed, counter_minor                        |
-; | y_speed_fraction   | cheep_start_y, piranha_low_y, flame_drift, squid_rise  |
-; | y_speed_whole      | piranha_moving, firework_frames, squid_stroke,         |
-; |                    | lakitu_direction, counter_major, firebar_angle_high    |
-; | state              | a balance lift: its partner's enemy number 0-5, or $FF |
-; | direction          | a balance lift: 1 when its rope broke                  |
-; | on_lift            | a large lift: the enemy number of the lift the player  |
-; |                    | stands on, or $FF; a small lift: his box, 1 or 2, or 0 |
-; | hammer_timer       | a hammer brother: frames to its next throw (on_lift's byte) |
-; | jump_timer         | a hammer brother: frames to its next jump              |
-;
-; A started object keeps every field that its start does not write (05a
-; section 2.4): a fire bar's angle starts from the Y speed that the slot's
-; earlier object left (05a L14), a hammer brother's jump timer from the one
-; that a hammer brother in the same slot left (05b L10).
-;
-; ---- This part's variables (GAMESTATE, below) -----------------------------
-;
-; Each is a temporary of one routine: written and read in the same call.
-;
-; | Name            | Size | Meaning                                       | Routine |
-; |-----------------|------|-----------------------------------------------|---------|
-; | bounds_left     | 2    | the left bound's distance, then the bound     | check_enemy_in_bounds |
-; | bounds_right    | 2    | the right bound (world X)                     | check_enemy_in_bounds |
-; | fire_bar_block  | 2    | 2 x the angle, for its block of fire_bar_pieces | spin_and_draw_fire_bar |
-; | fire_bar_count  | 1    | the balls after the center: 5 or 11           | spin_and_draw_fire_bar |
-; | fire_bar_piece  | 1    | the ball that draws, 0 to fire_bar_count - 1  | spin_and_draw_fire_bar, draw_fire_bar_pieces |
-; | fire_bar_sprite | 1    | the sprite entry of the next ball             | the fire bar routines |
-; | fire_ball_x     | 1    | the ball's sprite X                           | draw_fire_bar_pieces, check_fire_piece |
-; | fire_ball_y     | 1    | the ball's sprite Y                           | draw_fire_bar_pieces, check_fire_piece |
-; | fire_player_x   | 1    | the player's sprite X + 4                     | check_fire_piece |
-; | fire_bar_reach  | 22   | the X and Y offsets of the 11 balls at this angle | the fire bar routines |
-; | flame_columns   | 1    | the flame's offscreen bits, shifted out       | fly_bowser_flame |
-;
-; ---- The tables (scripts/enemies_data.py, bank 0) --------------------------
-;
-; | Label                  | Entries, form                                  | Index | Original |
-; |------------------------|------------------------------------------------|-------|----------|
-; | hammer_throw_gaps      | 2: frames between throws                       | hard_mode_2 | $C9CE |
-; | shell_air_slowdowns    | 2: signed X speed adders of a kicked shell in the air | 0 right, 1 left | $C9D0 entries 1, 3 |
-; | revived_shell_speeds   | 4: signed X speeds of a revive                 | frame parity + 2 x hard_mode | $C9D4 |
-; | hammer_jump_timers     | 2: frames before a jumping brother can land     | t0 AND random+2+e | $CA10 |
-; | squid_rate_masks       | 2: masks on random+1+e for the aim             | hard_mode_2 | $CB87 |
-; | swim_fish_x_speeds     | 2: the X fraction lost each frame              | kind - $0A | $CC46 |
-; | fire_bar_pieces        | 32 angles x 11 balls x (X offset, Y offset), signed | 22 x angle + 2 x ball | $CCC7, $CD2A, $CD2E |
-; | fire_bar_y_adders      | 2: the Y offsets of test points 2 and 3        | the point - 1 | $CD3A |
-; | fish_arc_heights       | 16: screen Y values that nudge the arc         | the Y speed's fraction / 16 | $CED5 (L2) |
-; | cloud_distance_adjusts | 3: Lakitu's speed bases                        | the base 0-2 | $CF25 |
-; | bridge_rows            | 15: the ring row of the top left cell of each bridge piece's square | bridge_collapse | $CFDD, $D028 |
-; | bridge_columns         | 15: its ring column (the code gives store_block_tiles their metatile place) | bridge_collapse | $CFDD |
-; | bowser_range_choices   | 4: walk ranges (pixels), jump timers (frames)  | random+e AND 3 | $D061 |
-; | bowser_flame_gaps      | 8: frames between flames                       | bowser_flame_timer | $D1D1 |
-; | castle_flag_dy, castle_flag_dx, castle_flag_tiles | 4 each, in sprite order | the sprite 0-3 | $D2CD, $D2D1, $D2D5 |
-; | bowser_flame_tile, bowser_flame_attr, bowser_flame_flipped_attr, castle_flag_attr, rope_left_tile, rope_right_tile, rope_blank_tile | 1 each | - | the operands of $D227, $D22B, $D233, $D37D, $D4EA, $D4EF, $D4F7 |
-;
-; The objects part's table bowser_flame_heights ($C59D, 4 bytes, by the
-; flame's height number) gives a flame's target height.
-;
-; Original: $C8D7-$D6D8 (05b), but run_nothing ($C8D6, 05a).
+; A, X and Y are 8-bit unless a routine says otherwise. DBR is bank 0;
+; D points to the active enemy record. Routines temporarily using another
+; record restore D before returning.
 
 .a8
 .i8
 
 
-; ---- Values of the enemies part (document 05b) ------------------------------
+; ---- Values of the enemies part ------------------------------
 ERASED_ENEMIES  = 5             ; erase_all_enemies empties enemy slots 0-4: slot 5 stays
-; Bounds (section 3, check_enemy_in_bounds; L8).
+; Bounds (check_enemy_in_bounds; L8).
 BOUND_LOW_KINDS = $49           ; the left bound's distance for kinds below the piranha plant (not 5)
 BOUND_HIGH_KINDS = $48          ;   for kinds above it
 BOUND_NEAR      = $10           ;   for the hammer brother and the piranha plant
-BOUND_NEAR_WRAPPED = $10F       ;   for them when the screen's left pixel is BOUND_NEAR_WRAP_X or more (L8)
+BOUND_NEAR_WRAPPED = $10F       ;   for them when the screen's left pixel is BOUND_NEAR_WRAP_X or more
 BOUND_NEAR_WRAP_X = $C7         ; from this left pixel on the original loses the carry of its + $39
 BOUND_RIGHT     = $48           ; the right bound: the right edge + this + the carry of the left bound
-; Walkers (section 5).
+; Walkers.
 GOOMBA_ERASE_TIME = $0E         ; a flat goomba is erased when its slow timer reads this
 FRAME_PARITY    = $01           ; frame_count bit 0
-; The hammer brother (section 6).
+; The hammer brother.
 HAMMER_LEFT_COLUMNS = OFFSCREEN_COLUMN_1 | OFFSCREEN_COLUMN_2 ; it throws only while both are on the screen
 HAMMER_JUMP_LOW = $FD           ;   3 up
 HAMMER_LOW_JUMP_Y = $70         ; above this row the low jump; from it to $7F a random one
@@ -249,41 +39,41 @@ HAMMER_NEXT_JUMP = $C0          ; the next jump in $C0-$FF frames: random+1+e OR
 HAMMER_SWAY_SPEED = 4           ; its sway: a quarter pixel a frame, 64 frames each way
 HAMMER_SWAY_PHASE = $40         ; frame_count bit 6: the sway to the left
 HAMMER_CHASE_SPEED = $F8        ; after its chase wait: half a pixel a frame left, to the player
-; The podoboo (section 19).
+; The podoboo.
 LAVA_LEAP_FRACTION = $80        ; the leap's speed fraction: random+1+e OR this
 LAVA_WAIT_BITS  = $0F           ; its wait: (random+1+e AND this) OR LAVA_WAIT_MIN slow ticks
 LAVA_WAIT_MIN   = $06
 LAVA_LEAP_SPEED = $F9           ; the leap's whole speed: 7 pixels a frame up, less the fraction
-; The red paratroopa and the vertical lift at rest (sections 8, 18).
+; The red paratroopa and the vertical lift at rest.
 REST_SINK_FRAMES = $07          ; 1 pixel each 8 frames: frame_count AND this = 0
-; The flying paratroopa (section 9).
+; The flying paratroopa.
 GREEN_SWAY_MAXIMUM = $13        ; the X counters' maximum: one sway in 320 frames
 FLY_BOB_FRAMES  = $03           ; it bobs 1 pixel each 4 frames: frame_count AND this = 0
 FLY_BOB_PHASE   = $40           ; frame_count bit 6: down
-; The X counters (section 9).
+; The X counters.
 COUNTER_FRAMES  = $03           ; the counters step each 4 frames: frame_count AND this = 0
 COUNTER_RIGHT   = $02           ; the primary counter's bit 1: the phases to the right
-; The blooper (section 10).
+; The blooper.
 SQUID_TOP_Y     = $20           ; it never rises above this row
 SQUID_STROKE_SINK = $02         ; the stroke counter's bit 1: the sink
 SQUID_STEP_FRAMES = $07         ; the stroke steps each 8 frames: frame_count AND this = 0
 SQUID_TOP_SPEED = 2             ; the stroke's top speed, whole pixels a frame
 SQUID_SINK_TICKS = 2            ; the sink's first part: 2 slow ticks
 SQUID_SINK_MARGIN = $10         ; then it sinks while its Y + this (+ L1's carry) is above the player's
-; The bullet bill of a wave (section 11).
+; The bullet bill of a wave.
 BULLET_SPEED    = $E8           ; 1.5 pixels a frame left
-; The swimming cheep-cheeps (section 12).
+; The swimming cheep-cheeps.
 FISH_DRIFT_SLOTS = 2            ; enemy slots below this do not drift
 FISH_DRIFT      = $20           ; the drift: 1/8 pixel a frame (Y fraction)
 FISH_DRIFT_UP   = $00           ; cheep_move: drift up
 FISH_DRIFT_DOWN = $10           ;   down (any value from this on)
 FISH_SWING      = $0F           ; the drift turns this many pixels from the start Y
-; The flying cheep-cheep (section 13).
+; The flying cheep-cheep.
 FISH_PULL       = $0D           ; apply_vertical_move: the down pull, 1/256 pixel a frame per frame
 FISH_TOP_SPEED  = 5             ;   the top speed
 FISH_ARC_NEAR   = 8             ; within this many pixels of the arc byte the speed's fraction gets + FISH_ARC_NUDGE
 FISH_ARC_NUDGE  = $10
-; Lakitu (section 14).
+; Lakitu.
 CLOUD_LEAVE_SPEED = $10         ; when he leaves: 1 pixel a frame
 CLOUD_FAR       = $3C           ; the distance limit; from it on he turns back
 CLOUD_DISTANCE  = $3C           ; the distance's bits that count: / 4 gives 0-15
@@ -292,10 +82,10 @@ CLOUD_FAST_SCROLL = 2           ;   and the screen scrolls this much or more
 CLOUD_LEFT      = 0             ; Object::lakitu_direction: he flies left; also the way to the player
 CLOUD_RIGHT     = 1             ;   right
 CLOUD_BASE_STILL = 0            ; the bases of cloud_distance_adjusts: the player still, or no scroll
-; The piranha plant (section 20).
+; The piranha plant.
 PIRANHA_NEAR    = $21           ; it stays in the pipe while the player is closer than this
 PIRANHA_REST    = $40           ; the rest at each end: 64 frames
-; The fire bars (section 15).
+; The fire bars.
 FIREBAR_ANGLE_MASK = $1F        ; the angle's high byte: 32 steps to a turn
 FIREBAR_ANGLES  = FIREBAR_ANGLE_MASK + 1
 FIREBAR_ANGLE_RIGHT = $08       ; the flat angles that a long bar skips
@@ -311,7 +101,7 @@ FIRE_BALL_X_LIMIT = $F0         ; a ball from this screen X on is not tested
 FIRE_PLAYER_CENTER = 4          ; the player's test X: his first sprite's X + this
 FIRE_LOW_POINT  = $18           ; the test point of a small or crouching player: his Y + this
 FIRE_TEST_POINTS = 2            ; the adders of fire_bar_y_adders: points 2 and 3
-; Bowser (section 16).
+; Bowser.
 BOWSER_GONE_Y   = $E0           ; a falling Bowser from this row on is gone
 BOWSER_FACE_FRAMES = $0F        ; he faces left on frames where frame_count AND this = 0
 BOWSER_FOLLOW_SPEED = 2         ; bowser_speed while he follows the player
@@ -331,20 +121,20 @@ BOWSER_REAR_BEHIND = $10        ; the rear half: 16 pixels behind him
 BOWSER_REAR_DROP = 8            ;   and 8 lower
 BRIDGE_PIECE_FRAMES = 4         ; a bridge piece each 4 frames (bowser_feet on the bridge)
 BRIDGE_PIECES   = 15            ; the axe, the chain, the 13 pieces (bridge_rows)
-; Bowser's flame (section 17).
+; Bowser's flame.
 FLAME_STEP_FRACTION = $40       ; each frame 1 pixel and this fraction to the left: 1.25 pixels
 FLAME_STEP_FRACTION_HARD = $60  ;   1.375 in hard_mode_2
 FLAME_STEP_PIXELS = 1
 FLAME_FLIP_FRAMES = $02         ; frame_count bit 1: the flipped attributes
 FLAME_PARTS     = 3             ; its sprites, 8 pixels apart
 FLAME_PART_WIDTH = 8
-; The fireworks and the castle flag (section 21).
+; The fireworks and the castle flag.
 FIREWORK_BURST_STEPS = 3        ; a firework's burst frames; its end at the third step
 FIREWORK_POINTS = 5             ; 500 points: digit_add + DIGIT_HUNDREDS
 TIME_UNIT_POINTS = 5            ; 50 points: digit_add + DIGIT_TENS
 TIME_UNIT_STEP  = $FF           ; digit_add + DIGIT_TENS: the time - 1
 BONUS_TICK_FRAMES = $04         ; frame_count bit 2: the tick sound of the time bonus
-STAR_FLAG_STEPS = 5             ; the castle flag's steps 0-4; at 5 the level ends (04)
+STAR_FLAG_STEPS = 5             ; the castle flag's steps 0-4; at 5 the level ends
 CASTLE_FLAG_TOP = $72           ; the flag rises while its Y is this or more (it stops at $71)
 CASTLE_FLAG_WAIT = 6            ; the wait after the fireworks: 6 slow ticks
 CASTLE_FLAG_SPRITES = 4
@@ -352,10 +142,10 @@ FIREWORKS_NONE  = $FF           ; fireworks_count: none
 TIME_ONE_FIREWORK = 1           ; the time's last digit of 1 firework, 3 and 6
 TIME_THREE_FIREWORKS = 3
 TIME_SIX_FIREWORKS = 6
-FIRST_FIREWORK_1 = 5            ; the flag's state: the first index into the firework places (05a)
+FIRST_FIREWORK_1 = 5            ; the flag's state: the first index into the firework places
 FIRST_FIREWORK_3 = 3
 FIRST_FIREWORK_6 = 0
-; The lifts (section 18).
+; The lifts.
 SCALE_LIFT_GONE = 3             ; a balance lift at Y high 3 is erased
 SCALE_TOP_Y     = $2D           ; a balance lift at this row or above is at the top
 SCALE_STOP_Y    = $2F           ;   and is put here
@@ -363,7 +153,7 @@ SCALE_DRAG      = $0005         ; nobody on the pair: its speed + this (1/256 pi
 SCALE_REST      = $000B         ;   below this the pair stops
 SCALE_ROPE_BROKEN = 1           ; a balance lift's direction: the fall flag
 FALL_STOPPED_ENEMY = 1          ; L7: the enemy whose speed stop_lifts clears at the rope's break
-ROPE_LIST_ROOM  = $20           ; the ropes only while list 1 is shorter than this (02 section 11.4 rule 4)
+ROPE_LIST_ROOM  = $20           ; the ropes only while list 1 is shorter than this
 ROPE_ORIGINAL_RECORD = 5        ; the original's rope record: 3 head bytes, 2 tiles (two of them: + 10)
 ROPE_CELLS      = 2             ; the cells of a rope record
 ROPE_X_SHIFT    = 8             ; the rope's column: the lift's X + this
@@ -386,6 +176,25 @@ SIDE_LIFT_MAXIMUM = $0E         ; the side lift's X counters: one sway in 240 fr
 
 ; ---- This part's variables -------------------------------------------------
 .segment "AREASTATE"
+; ---- This part's variables (AREASTATE) -----------------------------
+;
+; Each is a temporary of one routine: written and read in the same call.
+;
+; | Name            | Size | Meaning                                       | Routine |
+; |-----------------|------|-----------------------------------------------|---------|
+; | bounds_left     | 2    | the left bound's distance, then the bound     | check_enemy_in_bounds |
+; | bounds_right    | 2    | the right bound (world X)                     | check_enemy_in_bounds |
+; | fire_bar_block  | 2    | 2 x the angle, for its block of fire_bar_pieces | spin_and_draw_fire_bar |
+; | fire_bar_count  | 1    | the balls after the center: 5 or 11           | spin_and_draw_fire_bar |
+; | fire_bar_piece  | 1    | the ball that draws, 0 to fire_bar_count - 1  | spin_and_draw_fire_bar, draw_fire_bar_pieces |
+; | fire_bar_sprite | 1    | the sprite entry of the next ball             | the fire bar routines |
+; | fire_ball_x     | 1    | the ball's sprite X                           | draw_fire_bar_pieces, check_fire_piece |
+; | fire_ball_y     | 1    | the ball's sprite Y                           | draw_fire_bar_pieces, check_fire_piece |
+; | fire_player_x   | 1    | the player's sprite X + 4                     | check_fire_piece |
+; | fire_bar_reach  | 22   | the X and Y offsets of the 11 balls at this angle | the fire bar routines |
+; | flame_columns   | 1    | the flame's offscreen bits, shifted out       | fly_bowser_flame |
+;
+
 bounds_left:    .res 2          ; check_enemy_in_bounds: the left bound's distance, then the left bound
 bounds_right:   .res 2          ; check_enemy_in_bounds: the right bound
 fire_bar_block: .res 2          ; spin_and_draw_fire_bar: 2 x the angle
@@ -400,14 +209,14 @@ flame_columns:  .res 1          ; fly_bowser_flame: the offscreen bits, shifted 
 .segment "GAMEPLAY"
 
 ; ===========================================================================
-; The common run routines (05b section 3)
+; The common run routines
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; run_rescued_person: the mushroom retainer or the princess (kind $35), and
 ; each half of Bowser (draw_bowser_half): the offscreen bits, the screen
 ; place and the drawing. It does not move, is not tested here and is never
-; erased by the bounds (05b section 21).
+; erased by the bounds.
 ;
 ; In:       D = the record
 ; Out:      the slot's sprites
@@ -419,21 +228,21 @@ flame_columns:  .res 1          ; fly_bowser_flame: the offscreen bits, shifted 
 run_rescued_person:
 .a8
 .i8
-        jsr check_enemy_offscreen       ; 11: offscreen_bits + REL_ENEMY
-        jsr enemy_screen_position       ; 11: rel_x, rel_y + REL_ENEMY
-        jmp draw_enemy                  ; 11: the slot's six sprites
+        jsr check_enemy_offscreen ; offscreen_bits + REL_ENEMY
+        jsr enemy_screen_position ; rel_x, rel_y + REL_ENEMY
+        jmp draw_enemy ; the slot's six sprites
 
 ; ---------------------------------------------------------------------------
 ; run_ordinary_enemy: an enemy of kinds $00-$14 each frame: drawn and tested
 ; at its place of the frame before, then moved by its kind's rule (not
 ; during the hold), then the bounds (also during the hold).
 ;
-; The drawing can erase the enemy (11: below the screen); the steps after it
+; The drawing can erase the enemy (below the screen); the steps after it
 ; then see the empty slot, as in the original: its kind is 0, so its move is
 ; the walk of kind 0 at the X speed that the slot keeps. The kind is read
-; for the move after the collisions, which can change it (07: a stomped
+; for the move after the collisions, which can change it (a stomped
 ; paratroopa becomes a koopa). The attributes are cleared before the drawing
-; reads them, so a move's writes to them have no effect (05b section 3).
+; reads them, so a move's writes to them have no effect.
 ;
 ; In:       D = the enemy's record
 ; Out:      the record moved; its sprites; the collisions' results
@@ -446,24 +255,66 @@ run_ordinary_enemy:
 .a8
 .i8
         stz Object::attributes          ; no extra attributes for the drawing
-        jsr check_enemy_offscreen       ; 11
-        jsr enemy_screen_position       ; 11
-        jsr draw_enemy                  ; 11: it ORs the attributes into the sprites
-        jsr enemy_hit_box               ; 07: from the place drawn
-        jsr check_enemy_vs_tiles        ; 07: landing, walls, ledges
-        jsr enemies_bump_enemies        ; 07
-        jsr player_hits_enemy           ; 07: stomps, kicks, the player's injury
+        jsr check_enemy_offscreen
+        jsr enemy_screen_position
+        jsr draw_enemy ; it ORs the attributes into the sprites
+        jsr enemy_hit_box ; from the place drawn
+        jsr check_enemy_vs_tiles ; landing, walls, ledges
+        jsr enemies_bump_enemies
+        jsr player_hits_enemy ; stomps, kicks, the player's injury
         lda timer_hold
         bne @bounds                     ; the hold: no move
         jsr move_enemy_by_kind
 @bounds:
         jmp check_enemy_in_bounds
 
+; ---- The tables (scripts/enemies_data.py, bank 0) --------------------------
+;
+; | Label                  | Entries, form                                  | Index | Original |
+; |------------------------|------------------------------------------------|-------|----------|
+; | hammer_throw_gaps      | 2: frames between throws                       | hard_mode_2 | $C9CE |
+; | shell_air_slowdowns    | 2: signed X speed adders of a kicked shell in the air | 0 right, 1 left | $C9D0 entries 1, 3 |
+; | revived_shell_speeds   | 4: signed X speeds of a revive                 | frame parity + 2 x hard_mode | $C9D4 |
+; | hammer_jump_timers     | 2: frames before a jumping brother can land     | t0 AND random+2+e | $CA10 |
+; | squid_rate_masks       | 2: masks on random+1+e for the aim             | hard_mode_2 | $CB87 |
+; | swim_fish_x_speeds     | 2: the X fraction lost each frame              | kind - $0A | $CC46 |
+; | fire_bar_pieces        | 32 angles x 11 balls x (X offset, Y offset), signed | 22 x angle + 2 x ball | $CCC7, $CD2A, $CD2E |
+; | fire_bar_y_adders      | 2: the Y offsets of test points 2 and 3        | the point - 1 | $CD3A |
+; | fish_arc_heights       | 16: screen Y values that nudge the arc         | the Y speed's fraction / 16 | $CED5 |
+; | cloud_distance_adjusts | 3: Lakitu's speed bases                        | the base 0-2 | $CF25 |
+; | bridge_rows            | 15: the ring row of the top left cell of each bridge piece's square | bridge_collapse | $CFDD, $D028 |
+; | bridge_columns         | 15: its ring column (the code gives store_block_tiles their metatile place) | bridge_collapse | $CFDD |
+; | bowser_range_choices   | 4: walk ranges (pixels), jump timers (frames)  | random+e AND 3 | $D061 |
+; | bowser_flame_gaps      | 8: frames between flames                       | bowser_flame_timer | $D1D1 |
+; | castle_flag_dy, castle_flag_dx, castle_flag_tiles | 4 each, in sprite order | the sprite 0-3 | $D2CD, $D2D1, $D2D5 |
+; | bowser_flame_tile, bowser_flame_attr, bowser_flame_flipped_attr, castle_flag_attr, rope_left_tile, rope_right_tile, rope_blank_tile | 1 each | - | the operands of $D227, $D22B, $D233, $D37D, $D4EA, $D4EF, $D4F7 |
+;
+; The objects part's table bowser_flame_heights ($C59D, 4 bytes, by the
+; flame's height number) gives a flame's target height.
+;
+; Original: $C8D7-$D6D8, but run_nothing ($C8D6, 05a).
+
+; Merged: count_x_moves_green ($CB45) is the maximum's load in
+; move_flying_paratroopa; turn_fire_bar ($D410) and the original's first
+; and unused call of fire_bar_piece_offset (L3) are steps of
+; spin_and_draw_fire_bar, and fire_bar_piece_offset is the build-time table
+; fire_bar_pieces; hide_far_fire_piece ($CDE6) is a step of
+; draw_fire_bar_pieces and compare_fire_piece ($CE32) of check_fire_piece;
+; bowser_goto_flames ($D139) is a branch; draw_partner_rope ($D4FF) and
+; finish_rope_record ($D530) are steps of move_partner_lift; store_lift_carry
+; ($D628) is a step of shift_player_with_lift; carry_player_small_lift
+; ($D671) is a step of move_small_lift. The port's own: scale_partner,
+; place_player_on_lift. The original's second calls of
+; check_enemy_offscreen and enemy_screen_position in run_bowser_fire, and
+; its second enemy_screen_position in run_small_lift, give the same values
+; as the first and are not made.
+;
+
 ; ---------------------------------------------------------------------------
 ; move_enemy_by_kind: the move of kinds $00-$14, by the kind as it is after
 ; the collisions. The original's dispatch leaves the carry of its index
 ; shift (0) for the move; only move_squid reads it, and it computes that
-; carry itself (L1), so nothing reads a register from this jump.
+; carry itself, so nothing reads a register from this jump.
 ;
 ; In:       D = the enemy's record; Object::kind $00-$14
 ; Out:      the kind's move
@@ -523,8 +374,8 @@ run_bowser_fire:
 .a8
 .i8
         jsr fly_bowser_flame
-        jsr enemy_hit_box               ; 07
-        jsr player_hits_enemy           ; 07
+        jsr enemy_hit_box
+        jsr player_hits_enemy
         jmp check_enemy_in_bounds
 
 ; ---------------------------------------------------------------------------
@@ -546,7 +397,7 @@ run_fire_bar:
 
 ; ---------------------------------------------------------------------------
 ; run_small_lift: a small lift of a lift line (kinds $2B, $2C) each frame:
-; its box and the player's place on it (07), its drawing, then its move and
+; its box and the player's place on it, its drawing, then its move and
 ; the player carried, then the bounds. The lift is drawn before it moves.
 ; The original takes the screen place a second time before the drawing; the
 ; hit test writes only the box and the player, so the first place serves.
@@ -561,17 +412,17 @@ run_fire_bar:
 run_small_lift:
 .a8
 .i8
-        jsr check_enemy_offscreen       ; 11
-        jsr enemy_screen_position       ; 11
-        jsr small_lift_hit_box          ; 07
-        jsr small_lift_hit_test         ; 07: Object::on_lift = 0, or the box he stands on
-        jsr draw_small_lift_sprites     ; 11: the lift and its copy 128 lines lower
+        jsr check_enemy_offscreen
+        jsr enemy_screen_position
+        jsr small_lift_hit_box
+        jsr small_lift_hit_test ; Object::on_lift = 0, or the box he stands on
+        jsr draw_small_lift_sprites ; the lift and its copy 128 lines lower
         jsr move_small_lift
         jmp check_enemy_in_bounds
 
 ; ---------------------------------------------------------------------------
 ; run_large_lift: a large lift (kinds $24-$2A) each frame: its box and the
-; player's place on it (07), then, when the timers run, the move of its
+; player's place on it, then, when the timers run, the move of its
 ; kind and its screen place after the move, then its drawing and the
 ; bounds. The lift moves before it is drawn.
 ;
@@ -585,16 +436,16 @@ run_small_lift:
 run_large_lift:
 .a8
 .i8
-        jsr check_enemy_offscreen       ; 11
-        jsr enemy_screen_position       ; 11
-        jsr large_lift_hit_box          ; 07
-        jsr big_lift_hit_test           ; 07: Object::on_lift = $FF, or the lift he stands on
+        jsr check_enemy_offscreen
+        jsr enemy_screen_position
+        jsr large_lift_hit_box
+        jsr big_lift_hit_test ; Object::on_lift = $FF, or the lift he stands on
         lda timer_hold
         bne @draw                       ; the hold: no move, the place stays
         jsr large_lift_steps
         jsr enemy_screen_position       ; the place after the move
 @draw:
-        jsr draw_big_lift               ; 11
+        jsr draw_big_lift
         jmp check_enemy_in_bounds
 
 ; ---------------------------------------------------------------------------
@@ -625,10 +476,10 @@ large_lift_moves:
 
 ; ---------------------------------------------------------------------------
 ; clear_enemy_slot: an enemy slot empty: its active flag, kind, state, score
-; number, slow timer, shell chain, attributes and frame timer become 0
-; (05b section 3). The place, the speeds and the other fields stay: the
-; slot's next object keeps them (05a section 2.4). For enemy 5 the frame
-; timer is the wave timer (05a L29). The original returns A = 0; this one
+; number, slow timer, shell chain, attributes and frame timer become 0.
+; The place, the speeds and the other fields stay: the
+; slot's next object keeps them. For enemy 5 the frame
+; timer is the wave timer. The original returns A = 0; this one
 ; keeps A, and its callers store their own 0.
 ;
 ; In:       D = the enemy's record
@@ -647,7 +498,7 @@ clear_enemy_slot:
         sep #P_M8
 .a8
         stz Object::state
-        stz Object::score_kind          ; no score number (07)
+        stz Object::score_kind          ; no score number
         stz Object::shell_chain
         stz Object::attributes
         ldx Object::slot
@@ -658,7 +509,7 @@ clear_enemy_slot:
 ; ---------------------------------------------------------------------------
 ; erase_all_enemies: enemy slots 4 down to 0 empty (not slot 5), and no
 ; wave. The callers: bridge_collapse_task, bowser_actions, and the loop
-; check of a maze castle (05a read_enemy_spawns) when the player takes a
+; check of a maze castle (read_enemy_spawns) when the player takes a
 ; wrong path.
 ;
 ; In:       any D
@@ -685,14 +536,14 @@ erase_all_enemies:
 
 ; ---------------------------------------------------------------------------
 ; check_enemy_in_bounds: the erase of an enemy far left or far right of the
-; screen (05b section 3). Kind $14 (the flying cheep-cheep) is never erased
+; screen. Kind $14 (the flying cheep-cheep) is never erased
 ; here. The bounds are world X words from the screen's edges; the X
 ; compares take the sign of the 16-bit difference (bit 15, the original's
 ; page difference's sign bit), so they hold for differences of less than
 ; 128 pages.
 ;
 ; The distances of the left bound are the original's sums with the carries
-; of its compares (L8): $49 for kinds below the piranha plant ($0D) but the
+; of its compares: $49 for kinds below the piranha plant ($0D) but the
 ; hammer brother, $48 above; $10 for the hammer brother and the piranha
 ; plant, or $10F when the screen's left pixel is $C7 or more, where the
 ; original loses the carry of its + $39 and the bound is a page further
@@ -710,7 +561,7 @@ erase_all_enemies:
 ; Keeps:    Y, D
 ; Time:     about 110 cycles
 ; Original: $D67A-$D6D5 (check_enemy_in_bounds); callers also run_jump_spring,
-;           the cannon bullet and the power-up (05a)
+;           the cannon bullet and the power-up
 ; ---------------------------------------------------------------------------
 check_enemy_in_bounds:
 .a8
@@ -784,14 +635,14 @@ check_enemy_in_bounds:
         rts
 
 ; ===========================================================================
-; The walkers and their kin (05b sections 5-14, 19, 20)
+; The walkers and their kin (19, 20)
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; move_lava_ball: the podoboo (kind $0C). While its slow timer runs it flies
 ; (move_leaper_vertically: pull $1C, top 3 down): up from below the screen,
 ; back below it, and it waits there. When the timer ends it starts again
-; below the screen (start_lava_ball, 05a) with a new leap: Y speed $F9 + a
+; below the screen (start_lava_ball) with a new leap: Y speed $F9 + a
 ; fraction of $80-$FF (about 6.5 to 6 pixels a frame up) and a new wait of
 ; 6, 7, 14 or 15 slow ticks. It has no X move.
 ;
@@ -807,7 +658,7 @@ move_lava_ball:
         ldx Object::slot
         lda timers + TIMER_ENEMY_INTERVAL - SLOT_ENEMY,x
         bne @fly
-        jsr start_lava_ball             ; 05a: below the screen, still, state 0, box 9, direction 2
+        jsr start_lava_ball ; below the screen, still, state 0, box 9, direction 2
         ldx Object::slot
         lda random + 1 - SLOT_ENEMY,x
         ora #LAVA_LEAP_FRACTION
@@ -818,10 +669,10 @@ move_lava_ball:
         lda #LAVA_LEAP_SPEED
         sta Object::y_speed_whole
 @fly:
-        jmp move_leaper_vertically      ; 05a
+        jmp move_leaper_vertically
 
 ; ---------------------------------------------------------------------------
-; drive_hammer_bro: the hammer brother (kind $05) each frame (05b section 6).
+; drive_hammer_bro: the hammer brother (kind $05) each frame.
 ; A defeated brother falls. While its jump timer runs (it counts down here,
 ; 1 a frame) it throws: each hammer_throw_gaps + 1 frames (49, or 29 in
 ; hard_mode_2) while its left 16 pixels are on the screen; a throw that
@@ -831,7 +682,7 @@ move_lava_ball:
 ; Then it sways and faces the player (walk_hammer_bro).
 ;
 ; In:       D = the brother's record
-; Out:      the record; a hammer started (05a throw_hammer)
+; Out:      the record; a hammer started (throw_hammer)
 ; Changes:  A, X, Y
 ; Time:     about 60 cycles and the routines it calls
 ; Original: $C9D8-$CA36 (drive_hammer_bro)
@@ -856,10 +707,10 @@ drive_hammer_bro:
         ldy hard_mode_2
         lda hammer_throw_gaps,y
         sta Object::hammer_timer
-        jsr throw_hammer                ; 05a: carry set when a hammer started
+        jsr throw_hammer ; carry set when a hammer started
         bcc @count
         lda #HAMMER_BRO_THROWING
-        tsb Object::state               ; the throw pose (11 draws the hammer up)
+        tsb Object::state               ; the throw pose (sprite code draws the hammer up)
         bra walk_hammer_bro
 @count:
         dec Object::hammer_timer
@@ -891,11 +742,11 @@ drive_hammer_bro:
 
 ; ---------------------------------------------------------------------------
 ; launch_hammer_bro_jump: a hammer brother's jump starts: its Y speed, the
-; state's air bit, the frames before it can land (its frame timer: 07 lets
+; state's air bit, the frames before it can land (its frame timer: collision code lets
 ; it land only when this is 0, so it passes through the bricks meanwhile:
 ; $20, or $37 when t0 AND random+2+e picks it in hard_mode_2), and its next
 ; jump in $C0-$FF frames. Then its walk (walk_hammer_bro). The collision
-; part enters here when the brother meets a wall (07 bump_or_hammer_jump:
+; part enters here when the brother meets a wall (bump_or_hammer_jump:
 ; A = HAMMER_JUMP_HIGH, X = HAMMER_SHORT_BLOCK).
 ;
 ; In:       D = the brother's record; A8 = the jump's Y speed, whole pixels
@@ -950,7 +801,7 @@ walk_hammer_bro:
         ldy #<-HAMMER_SWAY_SPEED
 @sway:
         sty Object::x_speed
-; It faces the player: the sign of its X - his X (07 player_enemy_gap).
+; It faces the player: the sign of its X - his X (player_enemy_gap).
         ldy #FACING_RIGHT
         rep #P_M8
 .a16
@@ -970,10 +821,36 @@ walk_hammer_bro:
         sty Object::direction
         ; runs on into move_ordinary_enemy
 
+; ---- The state byte of the walking enemies (Object::state) --
+;
+; | Bits          | Meaning                                       | Set by |
+; |---------------|-----------------------------------------------|--------|
+; | 7             | a kicked shell (or the power-up's move)       | collision code, object code |
+; | 6             | a bit-7 object in the air                     | collision code |
+; | 5             | defeated: it falls off the screen             | collision code |
+; | 3             | the hammer brother shows its throw            | drive_hammer_bro; run_hammer (object code) clears it |
+; | 0-2 = 0       | walking                                       | object code, the revive here |
+; | 0-2 = 1       | in the air (a hammer brother's jump: bit 0)   | collision code, launch_hammer_bro_jump |
+; | 0-2 = 2       | knocked up by a block: falls at its full speed | collision code |
+; | 0-2 = 3       | stunned after a knock                         | collision code |
+; | 0-2 = 4       | stomped: a shell, or a flat goomba            | collision code |
+; | 0-2 = 5       | a spiny's egg                                 | object code |
+;
+; | State of a walker | Each frame (move_ordinary_enemy)            | Leaves when |
+; |-------------------|---------------------------------------------|-------------|
+; | walking           | moves by its X speed                        | collision code changes it |
+; | in the air (1, 2) | falls (drop_enemy_fast) at its X speed       | collision code lands it |
+; | stunned, stomped  | still                                       | its slow timer ends: walks at 8 (12 in hard_mode) units |
+; | flat goomba       | still                                       | its slow timer reads $0E: erased |
+; | kicked shell      | its X speed; in the air 24 units slower      | collision code |
+; | defeated          | falls at its X speed                        | the drawing erases it below the screen (sprite code) |
+; | spiny's egg       | falls (pull $20) at its X speed             | collision code makes it a spiny when it lands |
+;
+
 ; ---------------------------------------------------------------------------
-; move_ordinary_enemy: the move of a walker by its state (05b sections 4-5;
-; the table in the file header): kinds $00-$04, $06 and $12, the end of the
-; hammer brother's move, and the power-up's (05a). In the air (bit 6, or
+; move_ordinary_enemy: the move of a walker by its state. It handles kinds
+; $00-$04, $06 and $12, the end of the
+; hammer brother's move, and the power-up's. In the air (bit 6, or
 ; motion 1, 2 or 5) it falls with drop_enemy_fast (pull $3D, $20 for an egg;
 ; top 3) and moves at its X speed; a kicked shell in the air moves 24 units
 ; slower (shell_air_slowdowns, by the sign of its speed; the X speed is put
@@ -1006,7 +883,7 @@ move_ordinary_enemy:
         cmp #ENEMY_UPSIDE_DOWN
         bcs @stunned                    ; 3, 4, 6, 7
 @fall:
-        jsr drop_enemy_fast             ; 05a: pull $3D ($20 for state 5), top 3 down
+        jsr drop_enemy_fast ; pull $3D ($20 for state 5), top 3 down
         lda Object::state
         cmp #ENEMY_FLIPPED
         beq @walk                       ; knocked up: its full speed
@@ -1027,12 +904,12 @@ move_ordinary_enemy:
         adc shell_air_slowdowns+1       ; a speed to the left
 @slowed:
         sta Object::x_speed
-        jsr move_enemy_sideways         ; 05a
+        jsr move_enemy_sideways
         pla
         sta Object::x_speed
         rts
 @walk:
-        jmp move_enemy_sideways         ; 05a: X + the X speed
+        jmp move_enemy_sideways ; X + the X speed
 ; Stunned or stomped: the revive when the slow timer ends.
 @stunned:
         ldx Object::slot
@@ -1076,13 +953,13 @@ move_ordinary_enemy:
 drop_defeated_enemy:
 .a8
 .i8
-        jsr drop_enemy_fast             ; 05a
-        jmp move_enemy_sideways         ; 05a
+        jsr drop_enemy_fast
+        jmp move_enemy_sideways
 
 ; ---------------------------------------------------------------------------
-; move_leaper: the leaping green paratroopa (kind $0E), and the star (05a):
+; move_leaper: the leaping green paratroopa (kind $0E), and the star:
 ; move_leaper_vertically (pull $1C, top 3 down), then the move at its X
-; speed. 07 gives it Y speed $FD each time it lands: it bounces.
+; speed. collision code gives it Y speed $FD each time it lands: it bounces.
 ;
 ; In:       D = the record
 ; Out:      the record moved
@@ -1093,8 +970,8 @@ drop_defeated_enemy:
 move_leaper:
 .a8
 .i8
-        jsr move_leaper_vertically      ; 05a
-        jmp move_enemy_sideways         ; 05a
+        jsr move_leaper_vertically
+        jmp move_enemy_sideways
 
 ; ---------------------------------------------------------------------------
 ; move_red_paratroopa: the red paratroopa (kind $0F) swings up and down
@@ -1132,9 +1009,9 @@ move_red_paratroopa:
         lda Object::y_pos
         cmp Object::paratroopa_middle_y
         bcc @down
-        jmp red_paratroopa_up           ; 05a
+        jmp red_paratroopa_up
 @down:
-        jmp red_paratroopa_down         ; 05a
+        jmp red_paratroopa_down
 
 ; ---------------------------------------------------------------------------
 ; move_flying_paratroopa: the flying green paratroopa (kind $10): its sway
@@ -1235,7 +1112,7 @@ move_by_counters:
         ldy #FACING_LEFT
 @move:
         sty Object::direction
-        jsr move_enemy_sideways         ; 05a
+        jsr move_enemy_sideways
         tay                             ; the pixels moved
         pla
         sta Object::counter_minor
@@ -1243,7 +1120,7 @@ move_by_counters:
         rts
 
 ; ---------------------------------------------------------------------------
-; move_squid: the blooper (kind $07; 05b section 10). A defeated blooper
+; move_squid: the blooper (kind $07). A defeated blooper
 ; sinks (move_enemy_slowly: pull $0F, top 2), with no X move. Else it may
 ; aim: on frames where random+1+e AND squid_rate_masks[hard_mode_2] is 0
 ; (about 1 frame in 64, or 1 in 4 in hard_mode_2), in an odd enemy slot it
@@ -1270,7 +1147,7 @@ move_squid:
         lda Object::state
         and #ENEMY_DEFEATED
         beq @alive
-        jmp move_enemy_slowly           ; 05a
+        jmp move_enemy_slowly
 @alive:
 ; The aim.
         ldy #0                          ; c: no aim
@@ -1293,7 +1170,7 @@ move_squid:
         rep #P_M8
 .a16
         lda Object::x_pos
-        cmp player_object + Object::x_pos ; its X - his X (07 player_enemy_gap)
+        cmp player_object + Object::x_pos ; its X - his X (player_enemy_gap)
         sep #P_M8                       ; (the flags of the compare stay)
 .a8
         bpl @face                       ; at or right of the player: it faces left
@@ -1337,7 +1214,7 @@ move_squid:
         rts
 
 ; ---------------------------------------------------------------------------
-; swim_squid: the blooper's stroke (05b section 10). Counter 0: each 8th
+; swim_squid: the blooper's stroke. Counter 0: each 8th
 ; frame the rise + 1 and the swim speed = the rise; at 2, counter 1.
 ; Counter 1: each 8th frame the rise - 1, the swim speed = it; at 0, counter
 ; 2 and its slow timer = 2. Counter 2: it sinks 1 pixel on each even frame
@@ -1388,7 +1265,7 @@ swim_squid:
         ldx Object::slot
         lda timers + TIMER_ENEMY_INTERVAL - SLOT_ENEMY,x
         bne @sink_step
-        cpy #1                          ; carry = c (L1)
+        cpy #1                          ; carry = c
         lda Object::y_pos
         adc #SQUID_SINK_MARGIN
         cmp player_object + Object::y_pos ; the player's row
@@ -1420,15 +1297,14 @@ fly_bullet_bill:
         lda Object::state
         and #ENEMY_DEFEATED
         beq @fly
-        jmp move_leaper_vertically      ; 05a
+        jmp move_leaper_vertically
 @fly:
         lda #BULLET_SPEED
         sta Object::x_speed
-        jmp move_enemy_sideways         ; 05a
+        jmp move_enemy_sideways
 
 ; ---------------------------------------------------------------------------
-; swim_fish: the swimming cheep-cheeps (kinds $0A grey, $0B red; 05b section
-; 12). A defeated one sinks (move_enemy_slowly), with no X move. Else it
+; swim_fish: the swimming cheep-cheeps (kinds $0A grey, $0B red). A defeated one sinks (move_enemy_slowly), with no X move. Else it
 ; loses swim_fish_x_speeds[kind - $0A] of X fraction each frame ($40, a
 ; quarter pixel, or $80), with the borrow into the X word: always left. In
 ; enemy slots 2-5 it also drifts 1/8 pixel a frame up (cheep_move below
@@ -1449,7 +1325,7 @@ swim_fish:
         lda Object::state
         and #ENEMY_DEFEATED
         beq @alive
-        jmp move_enemy_slowly           ; 05a
+        jmp move_enemy_slowly
 @alive:
 ; The X: the fraction step with the borrow into the pixel and the page.
         lda Object::kind
@@ -1515,16 +1391,16 @@ swim_fish:
         rts
 
 ; ---------------------------------------------------------------------------
-; swoop_fish: the flying cheep-cheep (kind $14; 05b section 13). A defeated
+; swoop_fish: the flying cheep-cheep (kind $14). A defeated
 ; one falls (move_leaper_vertically) with no X move. Else it moves at its X
 ; speed, then flies with apply_vertical_move (pull $0D, top 5). The arc's
 ; nudge: i = its Y speed's fraction / 16 (0-15); when its row is within 8
 ; pixels of fish_arc_heights[i], the fraction gets + $10 (8 bits: no carry
 ; into the whole speed). The original reads its 5-byte table with i up to
-; 15, so the next table and the first bytes of its own code take part (L2):
+; 15, so the next table and the first bytes of its own code take part:
 ; fish_arc_heights holds those 16 bytes. Its writes of the attributes (0
 ; when defeated, flying_fish_priority[i] else) have no effect: the next run
-; clears the attributes before the drawing (05b section 3), so the port
+; clears the attributes before the drawing, so the port
 ; makes none.
 ;
 ; In:       D = the fish's record
@@ -1539,12 +1415,12 @@ swoop_fish:
         lda Object::state
         and #ENEMY_DEFEATED
         beq @alive
-        jmp move_leaper_vertically      ; 05a
+        jmp move_leaper_vertically
 @alive:
-        jsr move_enemy_sideways         ; 05a
+        jsr move_enemy_sideways
         lda #FISH_PULL
         ldy #FISH_TOP_SPEED
-        jsr apply_vertical_move         ; 05a: A the pull, Y the top speed
+        jsr apply_vertical_move ; A the pull, Y the top speed
 ; The arc's nudge.
         lda Object::y_speed_fraction
         lsr a
@@ -1569,11 +1445,11 @@ swoop_fish:
         rts
 
 ; ---------------------------------------------------------------------------
-; move_cloud_rider: Lakitu (kind $11; 05b section 14). A defeated Lakitu
+; move_cloud_rider: Lakitu (kind $11). A defeated Lakitu
 ; falls (drop_enemy_fast) with no X move. While his state is 0 the spiny
-; wave stays on (frenzy_kind = $12, 05a) and his speed comes from his
+; wave stays on (frenzy_kind = $12) and his speed comes from his
 ; distance to the player (measure_player_gap); when his state is not 0
-; (stop_waves, 05a: the wave ended) he leaves: his direction 0, no wave,
+; (stop_waves: the wave ended) he leaves: his direction 0, no wave,
 ; speed $10. His X speed is the speed toward his direction (Object::lakitu_direction
 ; 1: right, else left), and he moves.
 ;
@@ -1589,7 +1465,7 @@ move_cloud_rider:
         lda Object::state
         and #ENEMY_DEFEATED
         beq @alive
-        jmp drop_enemy_fast             ; 05a
+        jmp drop_enemy_fast
 @alive:
         lda Object::state
         beq @follow
@@ -1614,12 +1490,11 @@ move_cloud_rider:
         ldy #FACING_LEFT
 @move:
         sty Object::direction
-        jmp move_enemy_sideways         ; 05a
+        jmp move_enemy_sideways
 
 ; ---------------------------------------------------------------------------
-; measure_player_gap: Lakitu's speed from his distance to the player (05b
-; section 14). The distance t0 is the low byte of |his X - the player's X|
-; (L12: a gap of 256 pixels or more reads as its remainder), at most $3C.
+; measure_player_gap: Lakitu's speed from his distance to the player. The distance t0 is the low byte of |his X - the player's X|
+; (a gap of 256 pixels or more reads as its remainder), at most $3C.
 ; At $3C, when he flies away from the player he turns: at once when he
 ; flies left; when he flies right he slows by 1 unit a frame and that is his
 ; speed until it reaches 0, then he turns. The speed is a base -
@@ -1630,7 +1505,7 @@ move_cloud_rider:
 ; screen scrolls 2 pixels or more.
 ;
 ; Only Lakitu's run calls it in the port: the spiny egg's start in the
-; original also calls it, with no effect (05a L5). So its kind tests ($11 in
+; original also calls it, with no effect. So its kind tests ($11 in
 ; the turn, $12 for the player's move) are always true and false here.
 ;
 ; In:       D = Lakitu's record
@@ -1649,7 +1524,7 @@ measure_player_gap:
 .a16
         lda Object::x_pos
         sec
-        sbc player_object + Object::x_pos ; his X - the player's X (07 player_enemy_gap)
+        sbc player_object + Object::x_pos ; his X - the player's X (player_enemy_gap)
         sep #P_M8                       ; (the sign of the subtract stays); A = its low byte
 .a8
         bpl @gap
@@ -1704,7 +1579,7 @@ measure_player_gap:
         rts
 
 ; ---------------------------------------------------------------------------
-; bob_piranha: the piranha plant (kind $0D; 05b section 20). While its state
+; bob_piranha: the piranha plant (kind $0D). While its state
 ; is not 0 or its frame timer runs (a rest) nothing moves. At rest at an end
 ; (piranha_moving 0): after a rise (piranha_speed negative) it turns at
 ; once; in the pipe it stays while the player is less than $21 pixels away
@@ -1712,7 +1587,7 @@ measure_player_gap:
 ; moves. Moving: on odd frames, when the timers run, its row + the step;
 ; at the end of the move (piranha_low_y going down, piranha_high_y going
 ; up) it rests 64 frames. It rises 24 pixels in 48 frames. Its write of the
-; attributes has no effect (the drawing gives the plant its priority, 11),
+; attributes has no effect (the drawing gives the plant its priority),
 ; so the port makes none.
 ;
 ; In:       D = the plant's record
@@ -1737,7 +1612,7 @@ bob_piranha:
 .a16
         lda Object::x_pos
         sec
-        sbc player_object + Object::x_pos ; (07 player_enemy_gap)
+        sbc player_object + Object::x_pos ; (player_enemy_gap)
         sep #P_M8                       ; (the sign stays); A = the gap's low byte
 .a8
         bpl @gap
@@ -1778,7 +1653,7 @@ bob_piranha:
         rts
 
 ; ===========================================================================
-; The fire bars (05b section 15)
+; The fire bars
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -1792,19 +1667,19 @@ bob_piranha:
 ; the next one. Then the center ball at the bar's screen place in its first
 ; sprite, and 5 (short) or 11 (long) balls, ball p at 8 (p + 1) pixels from
 ; the center; the balls after the fifth go into the sprites of the bar's
-; second slot (duplicate_slot, its enemy number, 05a; one value for all
+; second slot (duplicate_slot, its enemy number; one value for all
 ; bars, L11).
 ;
 ; The original computes each ball's offsets from its angle at run time
 ; (fire_bar_piece_offset), and once more before the center with any index,
-; whose results are not used (L3). The port reads them from fire_bar_pieces
+; whose results are not used. The port reads them from fire_bar_pieces
 ; (the builder's table of 32 angles x 11 balls): one block move copies this
 ; angle's 22 bytes into fire_bar_reach.
 ;
 ; In:       D = the fire bar's record
 ; Out:      the angle; the balls' sprites (Y, X here; the tile and
 ;           attributes by draw_fire_piece_sprite); a hit: the player hurt
-;           (07) and enemy 0's direction (L4)
+; and enemy 0's direction
 ; Changes:  A, X, Y; the fire bar temporaries
 ; Time:     about 250 cycles and 120 for each ball, and the routines it calls
 ; Original: $CD3C-$CDBA (spin_and_draw_fire_bar), $D410-$D431 (turn_fire_bar),
@@ -1813,7 +1688,7 @@ bob_piranha:
 spin_and_draw_fire_bar:
 .a8
 .i8
-        jsr check_enemy_offscreen       ; 11
+        jsr check_enemy_offscreen
         lda offscreen_bits + REL_ENEMY
         and #OFFSCREEN_COLUMN_1
         beq @on_screen
@@ -1877,7 +1752,7 @@ spin_and_draw_fire_bar:
 .a8
 .i8
 ; The center ball: the bar's first sprite at its screen place.
-        jsr enemy_screen_position       ; 11
+        jsr enemy_screen_position
         ldx Object::slot
         ldy sprite_offset + SPR_ENEMY - SLOT_ENEMY,x
         sty fire_bar_sprite
@@ -1906,14 +1781,14 @@ spin_and_draw_fire_bar:
         cmp #FIREBAR_SLOT_BALLS
         bne @ball
         ldx duplicate_slot              ; the sixth ball on: the second slot's sprites
-        lda sprite_offset + SPR_ENEMY,x ; (duplicate_slot: an enemy number, 05a)
+        lda sprite_offset + SPR_ENEMY,x ; (duplicate_slot: an enemy number)
         sta fire_bar_sprite
         bra @ball
 @done:
         rts
 
 ; ---------------------------------------------------------------------------
-; draw_fire_bar_pieces: one ball of a fire bar (05b section 15): its sprite X
+; draw_fire_bar_pieces: one ball of a fire bar: its sprite X
 ; = the center's screen X + its X offset (8 bits); a ball whose X is $59 or
 ; more pixels from the center's (8 bits: it wrapped past a screen edge, as
 ; the true distance is at most 88) is hidden (the original's
@@ -1965,20 +1840,20 @@ draw_fire_bar_pieces:
 
 ; ---------------------------------------------------------------------------
 ; check_fire_piece: a fire bar ball's tile and attributes
-; (draw_fire_piece_sprite, 11), then its test against the player (the
+; (draw_fire_piece_sprite), then its test against the player (the
 ; original's compare_fire_piece), then the next sprite entry. No test while
 ; the star or the hold runs, or while the player is off the screen (Y high
 ; not 1). The test points: a big player standing: his Y, Y + $0C, Y + $18
 ; (fire_bar_y_adders); a small or crouching player: Y + $18 only. A point
 ; hits when |its Y - the ball's Y| < 8 (8 bits, signed), the ball's X is
 ; below $F0, and |the player's test X - the ball's X| < 8, where his test X
-; is his first sprite's X + 4: he is drawn after the enemies (03), so that X
+; is his first sprite's X + 4: he is drawn after the enemies, so that X
 ; is of the frame before while his Y is of this frame.
 ;
 ; The first hit ends the test: enemy 0's direction = 1 when the player's
 ; test X is the ball's X or more, else 2, whatever enemy slot 0 holds (L4:
 ; hurt_player does not read it; a walker there shows that facing until its
-; own code sets it again); then hurt_player (07; it does nothing while the
+; own code sets it again); then hurt_player ( it does nothing while the
 ; player is already hurt).
 ;
 ; In:       D = the fire bar's record; Y8 = the ball's sprite entry
@@ -1992,7 +1867,7 @@ draw_fire_bar_pieces:
 check_fire_piece:
 .a8
 .i8
-        jsr draw_fire_piece_sprite      ; 11: Y = the sprite entry
+        jsr draw_fire_piece_sprite ; Y = the sprite entry
         lda timers + TIMER_STAR
         ora timer_hold
         bne @next
@@ -2042,7 +1917,7 @@ check_fire_piece:
         adc fire_bar_y_adders,x
         inx
         bra @point
-; A hit: enemy 0's direction (L4), then the hurt.
+; A hit: enemy 0's direction, then the hurt.
 @hit:
         ldx #FACING_RIGHT
         lda fire_player_x
@@ -2051,7 +1926,7 @@ check_fire_piece:
         ldx #FACING_LEFT
 @side:
         stx enemy_objects + Object::direction ; enemy slot 0, whatever it holds
-        jsr hurt_player                 ; 07
+        jsr hurt_player
 @next:
         lda fire_bar_sprite
         clc
@@ -2060,11 +1935,11 @@ check_fire_piece:
         rts
 
 ; ===========================================================================
-; Bowser, his bridge and his flames (05b sections 16, 17)
+; Bowser, his bridge and his flames (17)
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; bridge_collapse_task: the first task of the victory mode (03), each frame:
+; bridge_collapse_task: the first task of the victory mode, each frame:
 ; Bowser's bridge falls, one piece each 4 frames (bowser_feet), the first
 ; when bowser_feet (1-$20 from his walk) reaches 0: the axe, the chain,
 ; then the 13 pieces from right to left, 15 in 60 frames. Each piece is a
@@ -2075,7 +1950,7 @@ check_fire_piece:
 ; (state $40, the fall sound in place of the blast) and the next frames move
 ; him down (move_enemy_slowly) until row $E0. The task ends when he is
 ; gone: below row $E0, any other state, or a kind other than Bowser's in
-; his slot (07 changes it when fire beats him): the event song stops, the
+; his slot (collision code changes it when fire beats him): the event song stops, the
 ; next victory task, erase_all_enemies.
 ;
 ; In:       any D (the victory mode: the player's)
@@ -2089,7 +1964,7 @@ bridge_collapse_task:
 .a8
 .i8
         phd
-        lda bowser_front_slot           ; his enemy number (05a)
+        lda bowser_front_slot           ; his enemy number
         clc
         adc #SLOT_ENEMY
         tax
@@ -2104,7 +1979,7 @@ bridge_collapse_task:
         lda Object::y_pos
         cmp #BOWSER_GONE_Y
         bcs @end
-        jsr move_enemy_slowly           ; 05a: he falls
+        jsr move_enemy_slowly ; he falls
         bra @draw
 ; The collapse: a piece each 4 frames.
 @collapse:
@@ -2125,7 +2000,7 @@ bridge_collapse_task:
         lsr a
         tay                             ; its ring metatile column
         lda #BLOCK_SET_BLANK
-        jsr store_block_tiles           ; 02: the blank square, both lengths of list 1 grown
+        jsr store_block_tiles ; the blank square, both lengths of list 1 grown
         lda #SQUARE2_BLAST
         sta snd_square2_queue
         lda #NOISE_BRICK_SHATTER
@@ -2136,7 +2011,7 @@ bridge_collapse_task:
         bne @draw
         rep #P_M8
 .a16
-        stz Object::y_speed             ; (05a clear_enemy_vspeed)
+        stz Object::y_speed             ; (clear_enemy_vspeed)
         sep #P_M8
 .a8
         lda #ENEMY_DROP
@@ -2157,7 +2032,7 @@ bridge_collapse_task:
         rts
 
 ; ---------------------------------------------------------------------------
-; bowser_actions: Bowser (kind $2D; 05b section 16) each frame, in the
+; bowser_actions: Bowser (kind $2D) each frame, in the
 ; original's order. Defeated (bit 5, by fireballs): below row $E0
 ; erase_all_enemies, else he falls (move_enemy_slowly) and is drawn. Else
 ; there is no wave while he lives; during the hold only his fire code and
@@ -2167,16 +2042,16 @@ bridge_collapse_task:
 ; frames, up to X $C8; no flame meanwhile); each 4 frames he steps by
 ; bowser_speed within range_from_origin of his origin (a new range from
 ; bowser_range_choices each time he passes his origin), turning at its ends
-; when he faces left. His X is the pixel byte only, with no page change
-; (L12). Then his gravity and hammers (bowser_gravity_hammers) and his fire
+; when he faces left. His X is the pixel byte only, with no page change.
+; Then his gravity and hammers (bowser_gravity_hammers) and his fire
 ; (bowser_breath_step), which run on into draw_whole_bowser.
 ;
-; Bowser's start writes his direction $DF (05a L32, 05b L5): this code reads
+; Bowser's start writes his direction $DF: this code reads
 ; it as the original does (= 1 for the turn, its bit 0 for the rear half),
-; and draw_enemy reads its bit 1 (11), until his first face-left frame.
+; and draw_enemy reads its bit 1, until his first face-left frame.
 ;
 ; In:       D = Bowser's front record
-; Out:      his records; frenzy_kind; the breath timer; a hammer (05a)
+; Out:      his records; frenzy_kind; the breath timer; a hammer
 ; Changes:  A, X, Y
 ; Keeps:    D
 ; Time:     about 120 cycles and the routines it calls
@@ -2193,7 +2068,7 @@ bowser_actions:
         bcc @falls
         jmp erase_all_enemies
 @falls:
-        jsr move_enemy_slowly           ; 05a
+        jsr move_enemy_slowly
         jmp draw_whole_bowser
 @alive:
         stz frenzy_kind                 ; no wave while he lives (his fire sets the flame)
@@ -2230,7 +2105,7 @@ bowser_actions:
 .a16
         lda Object::x_pos
         sec
-        sbc player_object + Object::x_pos ; (07 player_enemy_gap)
+        sbc player_object + Object::x_pos ; (player_enemy_gap)
         sep #P_M8                       ; (the sign stays)
 .a8
         bpl @walk                       ; at or right of the player
@@ -2284,7 +2159,7 @@ bowser_actions:
 ; he stands; at 1 he jumps: his row - 1 and the Y speed 2 pixels a frame up.
 ; When it is 0 he is in the air: move_enemy_slowly (pull $0F, top 2); in
 ; worlds 6-8 a hammer each 4 frames (throw_hammer: it takes his place and
-; direction, 05a); from row $80 on he is on the floor (he does not test the
+; direction); from row $80 on he is on the floor (he does not test the
 ; tiles): his jump timer = bowser_range_choices[random+e AND 3] ($11-$41
 ; frames). Then his fire (bowser_breath_step).
 ;
@@ -2300,14 +2175,14 @@ bowser_gravity_hammers:
         ldx Object::slot
         lda timers + TIMER_ENEMY_FRAME - SLOT_ENEMY,x
         bne @standing
-        jsr move_enemy_slowly           ; 05a
+        jsr move_enemy_slowly
         lda player_record + PlayerRecord::world
         cmp #WORLD_6
         bcc @floor
         lda frame_count
         and #BOWSER_HAMMER_FRAMES
         bne @floor
-        jsr throw_hammer                ; 05a
+        jsr throw_hammer
 @floor:
         lda Object::y_pos
         cmp #BOWSER_FLOOR_Y
@@ -2325,7 +2200,7 @@ bowser_gravity_hammers:
         dec Object::y_pos
         rep #P_M8
 .a16
-        lda #BOWSER_JUMP_SPEED          ; (05a clear_enemy_vspeed, then the whole speed)
+        lda #BOWSER_JUMP_SPEED          ; (clear_enemy_vspeed, then the whole speed)
         sta Object::y_speed
         sep #P_M8
 .a8
@@ -2336,7 +2211,7 @@ bowser_gravity_hammers:
 ; breath timer ends his mouth flips: open for 32 frames; when it closes the
 ; breath timer = the next gap of the flame cycle (next_flame_gap: 191 or 64
 ; frames, 16 less in hard_mode_2) and a flame starts at his mouth through
-; the wave start (frenzy_kind = $15, 05a). Then his drawing.
+; the wave start (frenzy_kind = $15). Then his drawing.
 ;
 ; In:       D = Bowser's front record
 ; Out:      bowser_body, the breath timer, frenzy_kind; his drawing
@@ -2374,9 +2249,9 @@ bowser_breath_step:
 
 ; ---------------------------------------------------------------------------
 ; draw_whole_bowser: both halves of Bowser: the front half in his slot, then
-; the rear half in the slot of duplicate_slot (an enemy number, 05a): 16
+; the rear half in the slot of duplicate_slot (an enemy number): 16
 ; pixels behind him (right of him when bit 0 of his direction is 0, left of
-; him when it is 1), 8 lower, the pixel bytes only (L12), with his state and
+; him when it is 1), 8 lower, the pixel bytes only, with his state and
 ; direction and kind $2D; each half is drawn and tested on its own
 ; (draw_bowser_half). bowser_draw is 0 after both.
 ;
@@ -2410,7 +2285,7 @@ draw_whole_bowser:
         clc
         adc Object::x_pos
         tay                             ; the rear's X, across the change of D
-        lda duplicate_slot              ; the rear half's enemy number (05a)
+        lda duplicate_slot              ; the rear half's enemy number
         clc
         adc #SLOT_ENEMY
         tax
@@ -2431,7 +2306,7 @@ draw_whole_bowser:
 
 ; ---------------------------------------------------------------------------
 ; draw_bowser_half: one half of Bowser: bowser_draw + 1 (1 while the front
-; half draws, 2 for the rear: the drawing picks the half by it, 11), its
+; half draws, 2 for the rear: the drawing picks the half by it), its
 ; offscreen bits, screen place and drawing (run_rescued_person), and, when
 ; its state is 0, its box ($0A) and its test against the player.
 ;
@@ -2451,15 +2326,15 @@ draw_bowser_half:
         bne @done
         lda #BOX_BOWSER
         sta Object::box
-        jsr enemy_hit_box               ; 07
-        jmp player_hits_enemy           ; 07
+        jsr enemy_hit_box
+        jmp player_hits_enemy
 @done:
         rts
 
 ; ---------------------------------------------------------------------------
 ; next_flame_gap: the next gap of the flame cycle (bowser_flame_gaps: 191 or
 ; 64 frames), and the cycle's step on, 0-7. Bowser's breath and the flame
-; wave's start (05a) step the same cycle.
+; wave's start step the same cycle.
 ;
 ; In:       nothing
 ; Out:      A8 = the gap in frames; bowser_flame_timer
@@ -2480,14 +2355,14 @@ next_flame_gap:
         rts
 
 ; ---------------------------------------------------------------------------
-; fly_bowser_flame: a flame's flight and its sprites (05b section 17). When
+; fly_bowser_flame: a flame's flight and its sprites. When
 ; the timers run it flies 1.25 pixels a frame left (1.375 in hard_mode_2):
 ; the 24-bit X - $0140 ($0160), with the borrow from the fraction into the
 ; X word; and while its row differs from its target height
-; (bowser_flame_heights[flame_height], 05a) it moves 1 pixel a frame toward
+; (bowser_flame_heights[flame_height]) it moves 1 pixel a frame toward
 ; it (flame_drift, +1 or -1; 0 for a flame of the wave). Then its screen
 ; place and offscreen bits, and with state 0 three sprites 8 pixels apart
-; (a flame that the star knocked out, 07, has state bit 5 and shows none):
+; (a flame that the star knocked out has state bit 5 and shows none):
 ; its first tile and the next two, the attributes with a flip in Y on frames
 ; where frame_count bit 1 is 1; each offscreen column bit hides a sprite:
 ; bit 3 the first, bit 2 the second, bit 1 the third, and bit 0 the slot's
@@ -2532,16 +2407,16 @@ fly_bowser_flame:
 ; Toward its target height.
         ldx Object::flame_height
         lda Object::y_pos
-        cmp bowser_flame_heights,x      ; 05a's table
+        cmp bowser_flame_heights,x      ; the flame height table
         beq @place
         clc
         adc Object::flame_drift
         sta Object::y_pos               ; the row only
 @place:
-        jsr enemy_screen_position       ; 11
-        jsr check_enemy_offscreen       ; 11
+        jsr enemy_screen_position
+        jsr check_enemy_offscreen
         lda Object::state
-        bne @done                       ; knocked out by the star (07): no sprites
+        bne @done                       ; knocked out by the star: no sprites
 ; Its three sprites.
         ldx Object::slot
         ldy sprite_offset + SPR_ENEMY - SLOT_ENEMY,x
@@ -2598,13 +2473,13 @@ fly_bowser_flame:
 .assert FLAME_PARTS = 3, error, "fly_bowser_flame writes three sprites"
 
 ; ===========================================================================
-; The castle flag, the fireworks (05b section 21)
+; The castle flag, the fireworks
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; animate_fireworks: a firework (kind $16): its burst frame (firework_step)
 ; steps each 8 frames (firework_frames counts them; the first frame shows
-; 7), and it is drawn each frame (draw_firework_burst, 11, which reads the
+; 7), and it is drawn each frame (draw_firework_burst, which reads the
 ; place of the fireball group: the firework's screen place is copied there;
 ; the fireballs ran earlier in the frame, so this has no other effect). In
 ; its 24th run, at burst frame 3, it ends with no drawing: only its active
@@ -2629,7 +2504,7 @@ animate_fireworks:
         cmp #FIREWORK_BURST_STEPS
         bcs @end
 @draw:
-        jsr enemy_screen_position       ; 11
+        jsr enemy_screen_position
         lda rel_y + REL_ENEMY
         sta rel_y + REL_FIREBALL
         lda rel_x + REL_ENEMY
@@ -2637,9 +2512,9 @@ animate_fireworks:
         ldx Object::slot
         ldy sprite_offset + SPR_ENEMY - SLOT_ENEMY,x
         lda Object::firework_step
-        jmp draw_firework_burst         ; 11: A = the burst frame, Y = the first sprite
+        jmp draw_firework_burst ; A = the burst frame, Y = the first sprite
 @end:
-        stz Object::active              ; the flag only (L14)
+        stz Object::active              ; the flag only
         lda #SQUARE2_BLAST
         sta snd_square2_queue
         lda #FIREWORK_POINTS
@@ -2648,12 +2523,12 @@ animate_fireworks:
 
 ; ---------------------------------------------------------------------------
 ; run_castle_flag: the flag on the castle (kind $31): no wave, then the step
-; of star_flag_task (the end-of-level walk, 04, sets 1 when the player
-; enters the castle; at 5, 04 ends the level):
+; of star_flag_task (the end-of-level walk, sets 1 when the player
+; enters the castle; at 5, player code ends the level):
 ;
 ; | Step | Routine             | Does                                  | Next when |
 ; |------|---------------------|---------------------------------------|-----------|
-; | 0    | castle_flag_return  | nothing (the flag is not drawn)       | 04 sets 1 |
+; | 0    | castle_flag_return  | nothing (the flag is not drawn)       | player code sets 1 |
 ; | 1    | pick_firework_count | the fireworks by the time's last digit | at once |
 ; | 2    | award_time_bonus    | the time to points, 1 unit a frame    | the time is 000 |
 ; | 3    | raise_castle_flag   | the flag rises, then the fireworks    | the fireworks are done |
@@ -2691,7 +2566,7 @@ castle_flag_return:
 ; pick_firework_count: the fireworks by the last digit of the time at this
 ; frame: 1 gives 1 firework and the flag's state 5; 3 gives 3 and 3; 6 gives
 ; 6 and 0; any other none ($FF) and 0. The flag's state is the first index
-; into the firework places (05a start_firework). Then the next step.
+; into the firework places (start_firework). Then the next step.
 ;
 ; In:       D = the castle flag's record; the time's digits
 ; Out:      fireworks_count, Object::state, star_flag_task + 1
@@ -2725,7 +2600,7 @@ pick_firework_count:
 ; frame_count bit 2 is 1; when the time is 000, the next step.
 ;
 ; In:       the time's digits; frame_count; player
-; Out:      the time and the score digits, their status records (07);
+; Out:      the time and the score digits, their status records;
 ;           snd_square2_queue; star_flag_task
 ; Changes:  A, X, Y
 ; Time:     about 40 cycles and the routines it calls
@@ -2750,7 +2625,7 @@ award_time_bonus:
         lda #TIME_UNIT_STEP
         sta digit_add + DIGIT_TENS
         ldy #DIGITS_TIME + TIME_DIGITS - 1 ; the time's ones
-        jsr add_digit_amounts           ; 07: the time - 1
+        jsr add_digit_amounts ; the time - 1
         lda #TIME_UNIT_POINTS
         sta digit_add + DIGIT_TENS      ; 50 points (the score's ones digit is a fixed 0)
         ; runs on into add_end_points
@@ -2762,7 +2637,7 @@ award_time_bonus:
 ; and his score's, the player number).
 ;
 ; In:       digit_add; player
-; Out:      the score digits; the status records (07)
+; Out:      the score digits; the status records
 ; Changes:  A, X, Y
 ; Time:     about 30 cycles and the routines it calls
 ; Original: $D336-$D34D (add_end_points)
@@ -2775,20 +2650,20 @@ add_end_points:
         beq @add
         ldy #DIGITS_SCORE_2 + SCORE_DIGITS - 1 ; player 2's
 @add:
-        jsr add_digit_amounts           ; 07
+        jsr add_digit_amounts
         lda player
         asl a
         asl a
         asl a
         asl a                           ; the high nybble: his score's field
         ora #NYBBLE_TIME                ; the low nybble: the time's
-        jmp refresh_status_number       ; 05a/07
+        jmp refresh_status_number
 
 ; ---------------------------------------------------------------------------
 ; raise_castle_flag: the flag rises 1 pixel a frame while its row is $72 or
 ; more (it stops at $71); then, while fireworks are left (fireworks_count 1
 ; or more), the firework wave (frenzy_kind = $16: a firework each 32 frames
-; through the wave start, 05a, each one taking 1 from fireworks_count); when
+; through the wave start, each one taking 1 from fireworks_count); when
 ; none is left, a wait of 6 slow ticks and the next step. The flag is drawn
 ; each frame.
 ;
@@ -2827,7 +2702,7 @@ raise_castle_flag:
 ; its tile, and castle_flag_attr (behind the background).
 ;
 ; In:       D = the castle flag's record
-; Out:      its screen place (11); its four sprites
+; Out:      its screen place; its four sprites
 ; Changes:  A, X, Y
 ; Time:     about 160 cycles and enemy_screen_position
 ; Original: $D365-$D395 (draw_castle_flag)
@@ -2835,7 +2710,7 @@ raise_castle_flag:
 draw_castle_flag:
 .a8
 .i8
-        jsr enemy_screen_position       ; 11
+        jsr enemy_screen_position
         ldx Object::slot
         ldy sprite_offset + SPR_ENEMY - SLOT_ENEMY,x
         ldx #0
@@ -2864,8 +2739,8 @@ draw_castle_flag:
 
 ; ---------------------------------------------------------------------------
 ; wait_for_area_end: the flag is drawn; when its slow timer has ended and no
-; event song plays (snd_event_music, 08), the last step (star_flag_task 5:
-; 04 ends the level).
+; event song plays (snd_event_music), the last step (star_flag_task 5:
+; player code ends the level).
 ;
 ; In:       D = the castle flag's record
 ; Out:      its sprites; star_flag_task
@@ -2880,14 +2755,14 @@ wait_for_area_end:
         ldx Object::slot
         lda timers + TIMER_ENEMY_INTERVAL - SLOT_ENEMY,x
         bne @wait
-        lda snd_event_music             ; 08: the event song that plays
+        lda snd_event_music ; the event song that plays
         bne @wait
         inc star_flag_task
 @wait:
         rts
 
 ; ===========================================================================
-; The lifts (05b section 18)
+; The lifts
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -2904,7 +2779,7 @@ wait_for_area_end:
 ; | at the top        | the top lift at row $2F, both stop          | at once: still; the rope breaks when the player stands on the other lift |
 ; | falling           | both fall (drop_falling_lift, pull $20, top 3); the player rides | each lift is erased at Y high 3 |
 ;
-; Its partner's slot is not checked (L9): when the partner was erased first
+; Its partner's slot is not checked: when the partner was erased first
 ; and another enemy took its slot, that enemy's row is moved.
 ;
 ; In:       D = the running lift's record
@@ -2996,10 +2871,10 @@ run_scale_lift:
         cmp Object::on_lift
         bne @raise
 @lower:
-        jsr lower_lift                  ; 05a
+        jsr lower_lift
         bra move_partner_lift
 @raise:
-        jsr raise_lift                  ; 05a
+        jsr raise_lift
         ; runs on into move_partner_lift
 
 ; ---------------------------------------------------------------------------
@@ -3007,8 +2882,7 @@ run_scale_lift:
 ; opposite amount (its row + the row before - the row after, 8 bits: its Y
 ; high stays); the player stays on the lift he stands on; while this lift
 ; moves (its Y speed not 0) and list 1 holds less than $20 bytes in the
-; original's record form (screen_list_1_original_end: 02 section 11.4, rule
-; 4), the ropes: a record of this lift's two rope cells (the rope when it
+; original's record form (screen_list_1_original_end), the ropes: a record of this lift's two rope cells (the rope when it
 ; sinks, blank when it rises) and one of the partner's (the other way); each
 ; counts 5 bytes of the original's (its length + 10, as there).
 ;
@@ -3074,11 +2948,11 @@ move_partner_lift:
 ; the attribute area, become 28 and 29; a rising lift from row $F8 on gives
 ; row 0, which this does not change). The tiles: the rope when the lift
 ; sinks, blank when it rises. The ring column is name table x 32 + the cell
-; column (PLAN.md "The screen records").
+; column (src/secondsight/ring.s).
 ;
 ; In:       D = the lift's record; A8 bit 7: 1 when the lift rises
 ; Out:      the record at the end of screen_list_1; screen_list_1_end + 6,
-;           screen_list_1_original_end + 5 (grow_list_1, 02)
+;           screen_list_1_original_end + 5 (grow_list_1)
 ; Changes:  A, X, Y
 ; Time:     about 130 cycles
 ; Original: $D541-$D597 (queue_lift_rope), the record writes of
@@ -3107,7 +2981,7 @@ queue_lift_rope:
         and #<~ROPE_ROW_FOLD
 @row_set:
         pha
-; The column, with the carry of the last add into the page (L6).
+; The column, with the carry of the last add into the page.
         lda Object::x_pos
         clc
         adc #ROPE_X_SHIFT
@@ -3147,7 +3021,7 @@ queue_lift_rope:
         sta screen_list_1 + CELLS_TILES + 1,x
         lda #CELLS_TILES + ROPE_CELLS
         ldy #ROPE_ORIGINAL_RECORD
-        jmp grow_list_1                 ; 02: both lengths of list 1
+        jmp grow_list_1 ; both lengths of list 1
 .assert CELLS_TILES = REC_CELLS_HEAD, error, "queue_lift_rope: the REC_CELLS fields"
 
 ; ---------------------------------------------------------------------------
@@ -3162,8 +3036,8 @@ queue_lift_rope:
 ; it had, and whatever is in enemy slot 1 loses its Y speed once.
 ;
 ; In:       D = the running lift's record
-; Out:      offscreen_bits + REL_ENEMY (the partner's); the score number
-;           (07); the fall flag; the speeds of stop_lifts
+; Out:      offscreen_bits + REL_ENEMY (the partner's); the score number;
+; the fall flag; the speeds of stop_lifts
 ; Changes:  A, X, Y
 ; Time:     about 60 cycles and the routines it calls
 ; Original: $D598-$D5B0 (start_lift_fall)
@@ -3173,10 +3047,10 @@ start_lift_fall:
 .i8
         phd
         jsr scale_partner
-        jsr check_enemy_offscreen       ; 11: the partner's bits
+        jsr check_enemy_offscreen ; the partner's bits
         pld
         lda #SCORE_1000
-        jsr start_score_number          ; 07: for this lift's slot
+        jsr start_score_number ; for this lift's slot
         lda rel_x + REL_PLAYER
         sta Object::score_x             ; at the player's screen place
         lda player_object + Object::y_pos
@@ -3203,7 +3077,7 @@ stop_lifts:
         rep #P_M8 | P_X8
 .a16
 .i16
-        stz Object::y_speed             ; (05a clear_enemy_vspeed)
+        stz Object::y_speed             ; (clear_enemy_vspeed)
         txa
         xba
         tax                             ; that enemy's record - enemy_objects
@@ -3228,7 +3102,7 @@ stop_lifts:
 drop_both_lifts:
 .a8
 .i8
-        jsr drop_falling_lift           ; 05a: this lift
+        jsr drop_falling_lift ; this lift
         phd
         jsr scale_partner
         jsr drop_falling_lift           ; the partner
@@ -3264,7 +3138,7 @@ scale_partner:
 ; ---------------------------------------------------------------------------
 ; place_player_on_lift: the player stays on the lift of enemy number A
 ; (stand_on_vertical_lift with D = that lift: 32 pixels above its row, his Y
-; speed 0, 07).
+; speed 0).
 ;
 ; In:       A8 = the lift's enemy number, 0-5; any D
 ; Out:      the player's place
@@ -3281,7 +3155,7 @@ place_player_on_lift:
         tax
         phd
         object_from_x
-        jsr stand_on_vertical_lift      ; 07
+        jsr stand_on_vertical_lift
         pld
         rts
 
@@ -3320,10 +3194,10 @@ run_vertical_lift:
         lda Object::y_pos
         cmp Object::lift_middle_y
         bcc @lower
-        jsr raise_lift                  ; 05a
+        jsr raise_lift
         bra carry_player_on_lift
 @lower:
-        jsr lower_lift                  ; 05a
+        jsr lower_lift
         ; runs on into carry_player_on_lift
 
 ; ---------------------------------------------------------------------------
@@ -3341,7 +3215,7 @@ carry_player_on_lift:
 .i8
         lda Object::on_lift
         bmi @done
-        jmp stand_on_vertical_lift      ; 07
+        jmp stand_on_vertical_lift
 @done:
         rts
 
@@ -3372,7 +3246,7 @@ run_horizontal_lift:
 ; shift_player_with_lift: the player moves with the lift he stands on: his X
 ; word + the move, sign-extended (the original's X add and its page add with
 ; the carry or the borrow); lift_scroll = the move (the scroll adds it to his
-; push and clears it, 04); and he stays on the lift (stand_on_vertical_lift).
+; push and clears it); and he stays on the lift (stand_on_vertical_lift).
 ;
 ; In:       D = the lift's record; A8 = the move, signed pixels
 ; Out:      the player's X, lift_scroll, his place on the lift
@@ -3395,7 +3269,7 @@ shift_player_with_lift:
         sta player_object + Object::x_pos
         sep #P_M8
 .a8
-        jmp stand_on_vertical_lift      ; 07
+        jmp stand_on_vertical_lift
 
 ; ---------------------------------------------------------------------------
 ; run_drop_lift: the lift that drops while the player stands on it (kind
@@ -3413,8 +3287,8 @@ run_drop_lift:
 .i8
         lda Object::on_lift
         bmi @done
-        jsr move_drop_lift              ; 05a
-        jmp stand_on_vertical_lift      ; 07
+        jsr move_drop_lift
+        jmp stand_on_vertical_lift
 @done:
         rts
 
@@ -3433,7 +3307,7 @@ run_drop_lift:
 run_right_lift:
 .a8
 .i8
-        jsr move_enemy_sideways         ; 05a: A = the pixels moved
+        jsr move_enemy_sideways ; A = the pixels moved
         ldx Object::on_lift
         bmi @done
         ldx #RIGHT_LIFT_SPEED
@@ -3477,14 +3351,14 @@ move_small_lift:
         jsr move_lift_vertically
         lda Object::on_lift
         beq @done
-        jmp stand_on_small_lift         ; 07: A = his box
+        jmp stand_on_small_lift ; A = his box
 @done:
         rts
 
 ; ---------------------------------------------------------------------------
 ; move_lift_vertically: the move of a lift of a lift line when the timers
 ; run: the Y fraction and row, one word, + the Y speed (15/16 pixel a frame
-; up or down, from the start: 05a): no gravity, and the Y high does not
+; up or down, from the start): no gravity, and the Y high does not
 ; change, so the row wraps at 256 and the lifts of a line come round from the
 ; bottom to the top or back (the word's carry is the original's carry from
 ; the fraction into the row; the carry out of the row is lost, as there).

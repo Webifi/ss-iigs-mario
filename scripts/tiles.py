@@ -1,30 +1,13 @@
-"""The tile art of the card, from the tile ROM (8 KB: the sprite pattern
-table, tiles $00-$FF at $0000, then the background pattern table at $1000).
+"""Prepare tile art for the Second Sight card.
 
-A tile is 16 bytes: bit plane 0 of rows 0-7, then bit plane 1. Pixel x of
-row y has pen (plane0[y] >> (7 - x)) & 1 | ((plane1[y] >> (7 - x)) & 1) << 1.
+scripts/assets.py calls build() with the tile ROM and program ROM. The tile
+ROM has a 4 KB sprite table followed by a 4 KB background table. Each tile
+is 8 by 8 pixels, stored as two 8-byte bit planes; the two bits at a pixel
+select one of four colour values.
 
-The card's pixel values are colour chip slots, the original's palette
-entries: a background pixel of palette p and pen c is 4 p + c, but pen 0 is
-0 (the backdrop, entry 0, in every palette); a sprite pixel is 16 + 4 p + c
-(src/secondsight/ring.s, picture.s).
-
-The builder writes (src/secondsight/sprites.s, status.s, page.s read them):
-- chr_sprites, chr_bg: the two pattern tables as they are, each one 4 KB
-  page of SRAM (.desc), for the card's sprite art cache and status copies.
-- sprite_opacity, bg_opacity: for each tile row, a byte with bit 7 - x set
-  where pixel x has a pen other than 0 (.common, 256-aligned).
-- metatile_tiles: the 4 tiles of each metatile number m (0-255), for the
-  COLUMN screen record (src/secondsight/ring.s record_column): four 256-byte
-  parts, index m: the left top, left bottom, right top and right bottom
-  tile (.common, 256-aligned). From the program's metatile tables (document
-  02 section 17.4): metatile_table_low/high ($8B08, $8B0C) give the table of
-  palette m >> 6; entry m & $3F of it holds the 4 tiles in that order. An
-  entry past a table's last one reads the next table, as the original does.
-- tile_art: every background tile in every palette, in video RAM: cell
-  (palette p, tile t) is 16 groups from group 16 x (256 p + t) of tile_art:
-  8 rows of 2 groups. Group g of a row holds pixels 4 g to 4 g + 3, pixel
-  4 g + q in plane q, at linear byte 4 x group + q.
+Background pixel value is 4 * palette + colour, except colour 0 uses the
+backdrop. Sprite pixels use 16 + 4 * palette + colour. The card code in
+src/secondsight reads the generated tables and video RAM art.
 """
 
 from asset_source import Source
@@ -36,7 +19,7 @@ TABLE_BYTES = TILE_BYTES * TABLE_TILES
 PALETTES = 4
 CELL_GROUPS = 16  # 8 rows of 2 groups (src/secondsight/include/video.inc TILE_ART_GROUPS)
 PROGRAM_BASE = 0x8000  # the CPU address of the program's first byte
-METATILE_TABLE_LOW = 0x8B08  # the low bytes of the 4 metatile tile tables (02 section 17.4)
+METATILE_TABLE_LOW = 0x8B08  # the low bytes of the 4 metatile tile tables
 METATILE_TABLE_HIGH = 0x8B0C  # their high bytes
 METATILES = 256
 METATILE_TILES = 4
@@ -50,6 +33,8 @@ def pens(tile):
     ]
 
 
+# sprite_opacity, bg_opacity: for each tile row, a byte with bit 7 - x set
+#   where pixel x has a pen other than 0 (.common, 256-aligned).
 def opacity(table):
     """The opacity byte of each row of each tile of a pattern table."""
     out = bytearray()
@@ -59,6 +44,10 @@ def opacity(table):
     return bytes(out)
 
 
+# tile_art: every background tile in every palette, in video RAM: cell
+#   (palette p, tile t) is 16 groups from group 16 x (256 p + t) of tile_art:
+#   8 rows of 2 groups. Group g of a row holds pixels 4 g to 4 g + 3, pixel
+#   4 g + q in plane q, at linear byte 4 x group + q.
 def tile_art(table):
     """The linear video RAM bytes of every background cell."""
     out = bytearray(PALETTES * TABLE_TILES * CELL_GROUPS * 4)
@@ -74,6 +63,12 @@ def tile_art(table):
     return bytes(out)
 
 
+# metatile_tiles: the 4 tiles of each metatile number m (0-255), for the
+#   COLUMN screen record (src/secondsight/ring.s record_column): four 256-byte
+#   parts, index m: the left top, left bottom, right top and right bottom
+#   tile (.common, 256-aligned). From the program's metatile tables: metatile_table_low/high ($8B08, $8B0C) give the table of
+#   palette m >> 6; entry m & $3F of it holds the 4 tiles in that order. An
+#   entry past a table's last one reads the next table, as the original does.
 def metatile_tiles(program):
     """The four 256-byte parts of the metatile table (see the module header)."""
     parts = [bytearray(METATILES) for _ in range(METATILE_TILES)]
@@ -87,6 +82,8 @@ def metatile_tiles(program):
     return b"".join(parts)
 
 
+# chr_sprites, chr_bg: the two pattern tables as they are, each one 4 KB
+#   page of SRAM (.desc), for the card's sprite art cache and status copies.
 def build(tiles, program):
     """Write the card's tile art sources. TILES: the 8 KB tile ROM;
     PROGRAM: the 32 KB program (the metatile tables)."""

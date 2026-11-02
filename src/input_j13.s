@@ -1,18 +1,21 @@
-; The J13 keyboard: the keyboard of the ROM 00 and ROM 01 IIgs on the J13
-; connector, which the ADB microcontroller scans itself and shows only
-; through KBD, KBDSTRB and KEYMODREG. Part of the input (src/input.s), in
-; its scope; input_sample, input_tick and input_capture call it.
+; Read the J13 keyboard used by ROM 00 and ROM 01 IIgs machines.
+; input.s calls these routines to capture presses and releases. J13 is the
+; internal keyboard connector; the Apple Desktop Bus (ADB) microcontroller
+; scans it. The keyboard GLU is the interface used to send commands and read
+; replies from that microcontroller.
 ;
-; The method: KBD and KBDSTRB give only the last character and "a key is
-; down", not the state of each key. So a character becomes a key identity
-; (asciiKeys, an ADB key code) and an INPUT_J13 press event; KBDSTRB gives
-; the release of a single key. With more keys held, and only on the known
-; microcontroller ROM (j13Matrix), the code reads the switch rows of the
-; held keys from the microcontroller RAM (GLU_READ_MEMORY) to find the key
-; that went up, and P3 (MCU_P3) for the live modifier keys. A row read owns
-; the GLU: the DOC tick sends its bytes (sendAlarm) and the capture takes
-; its reply (J13Pump).
-;
+; The keyboard registers expose the last character and whether a key is
+; down, not the state of every held key. When several keys are held, this
+; code reads switch rows from a recognized microcontroller ROM to identify
+; releases. The clock tick sends the request and input capture takes the
+; reply; the GLU is reserved for that read until the reply or timeout.
+
+.a16
+.i16
+NONE = 255                   ; no key identity (j13Keys, keyAction)
+ROMVER_J13_END = 2           ; ROMVER: the J13 keyboard on ROM 00 and 01 only
+GLU_WAIT = 16384             ; sendBounded, readBounded: the most status reads
+INIT_DRAIN_MAX = 256         ; J13Init: the most DATAREG bytes of the boot to drop
 ; The microcontroller (the ROM of the ROM 00 and ROM 01 keyboard
 ; microcontroller, Apple 341-0345, at $1400): its scanner at $18AC reads
 ; the MCU_ROWS switch rows and keeps them in its RAM from MCU_ROW_FIRST, one
@@ -22,58 +25,6 @@
 ; of the two routines (matrixROM) before it reads a row. A command of
 ; GLU_READ_MEMORY returns one byte (Firmware Reference, chapter 9).
 ;
-; The modes (j13Mode; src/input.s input_sample sets them):
-;   J13_ESCAPE  the play with J13 play off: only an ESC character counts
-;               (escapeSample); it opens the menu.
-;   J13_MENU    the options menu and the title: every key, at each sample
-;               of the input (J13Poll: once a frame on the title, every
-;               MENU_WAIT ticks in the menu); before a character the held
-;               keys are checked with a direct row read (J13ValidateTracked).
-;   J13_PLAY    the play with J13 play on: the keys at each DOC tick
-;               (j13Irq), the row batches for the releases (deferRows,
-;               scheduleRow, J13Pump), at most every second frame.
-; A change to J13_ESCAPE or from it forgets the held keys; from J13_MENU to
-; J13_PLAY or back they stay, and J13_PLAY checks them.
-;
-; The row read (j13State):
-;   JS_IDLE     no read; J13Pump returns.
-;   JS_ARMED    a read waits for the GLU: when the capture has no work,
-;               J13Pump takes the GLU and sends GLU_READ_MEMORY: JS_ADDRESS.
-;   JS_ADDRESS  the low address byte goes out when the GLU is free: JS_HIGH.
-;   JS_HIGH     the high address byte goes out: JS_REPLY.
-;   JS_REPLY    the reply byte comes (J13Pump from the capture); the next row
-;               of the batch: JS_ADDRESS again, or the GLU goes back:
-;               JS_IDLE (releaseOwner). Past rowDeadline: JS_IDLE, and the
-;               row reads stop (j13Matrix 0).
-;
-; Routines:
-;   J13Init, J13Prime         find the J13 keyboard and its microcontroller ROM; the start state
-;   J13Menu, setMode          the mode
-;   J13SettingsLoad, J13SettingsStore  SET_J13
-;   J13Poll, J13Frame, j13Irq the work of a menu sample, a play sample, a play tick
-;   readControllerClock       controllerTime from inputClock
-;   escapeSample              ESC in J13_ESCAPE
-;   J13Sample and its parts   one sample of KBD, KBDSTRB and KEYMODREG
-;                             (sampleModifiers, sampleCharacter)
-;   readModifiers, updateModifiers  the modifier keys
-;   menuUsed                  the first menu use turns J13 play on
-;   ordinaryDown, releaseOrdinary   the held identities
-;   queueRoom, queue          the events
-;   deferRows, scheduleRow, scheduleTwoKeys, cacheRows  the row batches
-;   J13Pump and its parts     one step of a row read (pumpPhysicalReply)
-;   serviceController         a play sample's J13Pump and the read's time limit
-;   releaseOwner, finishOwner the GLU back to the ADB capture
-;   sendAlarm, startSendTimer the DOC tick's step of an owned read
-;   clearHeld                 forget the held identities
-;   sendBounded, readBounded, readMCU  GLU bytes with a bound
-;   bufferKeyboard, stopFirmwareRepeat, sendKeyboardConfig, probeADB  the GLU setup
-;   J13ValidateTracked, readTransition, J13CacheRows  the direct row reads
-.a16
-.i16
-NONE = 255                   ; no key identity (j13Keys, keyAction)
-ROMVER_J13_END = 2           ; ROMVER: the J13 keyboard on ROM 00 and 01 only
-GLU_WAIT = 16384             ; sendBounded, readBounded: the most status reads
-INIT_DRAIN_MAX = 256         ; J13Init: the most DATAREG bytes of the boot to drop
 MCU_SIGNATURE1 = $18ac       ; the microcontroller ROM: SIGNATURE_PART bytes at
 MCU_SIGNATURE2 = $1a10       ; each address must be equal to matrixROM
 SIGNATURE_PART = 32
@@ -1553,11 +1504,35 @@ j13Enabled: .word 0             ; J13_ON: the play reads the J13 keyboard
 j13AdbPresent: .word 1          ; 1: an ADB keyboard answers (raw keys)
 j13Available: .word 0           ; 1: a ROM 00/01 machine
 j13Matrix: .word 0              ; 1: the known microcontroller ROM: the row reads work
+; The modes (j13Mode; src/input.s input_sample sets them):
+;   J13_ESCAPE  the play with J13 play off: only an ESC character counts
+;               (escapeSample); it opens the menu.
+;   J13_MENU    the options menu and the title: every key, at each sample
+;               of the input (J13Poll: once a frame on the title, every
+;               MENU_WAIT ticks in the menu); before a character the held
+;               keys are checked with a direct row read (J13ValidateTracked).
+;   J13_PLAY    the play with J13 play on: the keys at each DOC tick
+;               (j13Irq), the row batches for the releases (deferRows,
+;               scheduleRow, J13Pump), at most every second frame.
+; A change to J13_ESCAPE or from it forgets the held keys; from J13_MENU to
+; J13_PLAY or back they stay, and J13_PLAY checks them.
+;
 j13Mode: .word 0                ; J13_ESCAPE, J13_MENU or J13_PLAY
 j13NextMode: .word 0            ; setMode: the mode to set
 j13MenuSeen: .word 0            ; 1: the menu has been used (or the player chose J13 play)
 j13Manual: .word 0              ; J13_CHOSEN: the player chose J13 play in the menu
 j13Owner: .word 0               ; 1: a row read owns the GLU
+; The row read (j13State):
+;   JS_IDLE     no read; J13Pump returns.
+;   JS_ARMED    a read waits for the GLU: when the capture has no work,
+;               J13Pump takes the GLU and sends GLU_READ_MEMORY: JS_ADDRESS.
+;   JS_ADDRESS  the low address byte goes out when the GLU is free: JS_HIGH.
+;   JS_HIGH     the high address byte goes out: JS_REPLY.
+;   JS_REPLY    the reply byte comes (J13Pump from the capture); the next row
+;               of the batch: JS_ADDRESS again, or the GLU goes back:
+;               JS_IDLE (releaseOwner). Past rowDeadline: JS_IDLE, and the
+;               row reads stop (j13Matrix 0).
+;
 j13State: .word 0               ; JS_*
 j13SendTimer: .word 0           ; 1: input_tick runs sendAlarm
 sendBudget: .word 0             ; sendAlarm calls left before the read times out
@@ -1601,10 +1576,8 @@ sampleTimed: .word 0            ; 1: sampleTime is set for this sample
 ; ---------------------------------------------------------------------------
 ; sendBounded: write A8 to DATAREG when the GLU command register is free;
 ; carry 1 after GLU_WAIT busy reads. No delay write after it: a write of
-; $C05F (AN3) is a Second Sight event (Second Sight reference,
-; docs/reference/z180-io-ports.md, "Apple event addresses"), and an event
-; while the card's DMA channel 1 runs is a DMA request
-; (docs/14-custom-code.md, "In through event bytes and DMA1").
+; $C05F (AN3) is a Second Sight event, and an event while the card's
+; DMA channel 1 runs is a DMA request.
 ;
 ; In:       A8 the byte
 ; Out:      carry

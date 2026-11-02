@@ -12,8 +12,8 @@
 ;          firmware's parts of SRAM ($0000-$03FF, $0C00-$1FFF, $6000-$FFFF)
 ;          come back from the EPROM, as its cold start copies them. Then the
 ;          card jumps to the firmware's reset. With SRAM mapped at $0000 the
-;          reset skips its own copy from the EPROM (second-sight-reference
-;          docs/05-z180.md, "Boot"), so the firmware must be back first. The
+;          reset skips its own copy from the EPROM, so the firmware must be
+;          back first. The
 ;          copies cover the card's stack ($9Fxx): after them nothing calls
 ;          or returns. The firmware then serves the IIgs again (SetMode,
 ;          SetShadow ...).
@@ -30,7 +30,7 @@
 
         .global menu_enter, menu_end
 
-        .equ FIRMWARE_RESET, 0x0000     ; the firmware's reset vector (z180-memory-map.md)
+        .equ FIRMWARE_RESET, 0x0000     ; the firmware's reset vector
 
 ; firmware_copy START, BYTES: copy BYTES of the firmware image from the
 ; EPROM back into SRAM at START (through SRAM_MIRROR), with DMA channel 0 in

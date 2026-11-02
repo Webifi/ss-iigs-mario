@@ -153,8 +153,9 @@ failed:
         bra failed
 
 ; main_loop: one frame of the original for each frame of the clock. The
-; game never drops a frame: when it is late, the frames run one after the
-; other until it is on time (the card then skips pictures, packet.s).
+; game consumes frames_due one at a time; if it falls behind, it runs them
+; back to back. The count is eight bits and wraps at 256. The menu clears
+; it on exit (src/menu.s); the card can skip pictures (src/packet.s).
 ; Between frames the menu key opens the options menu (src/menu.s).
 main_loop:
         sep #$30

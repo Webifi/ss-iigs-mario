@@ -3,8 +3,7 @@
 ; Unchained 256-colour mode: one CPU address in the VGA window is one group
 ; of four neighbouring pixels, one pixel in each plane (map mask bit q =
 ; pixel 4 x group + q). In write mode 1 a read loads the four planes into
-; the latches and a write stores them: one LDI copies four pixels
-; (Second Sight reference, 15-oak-drawing.md, "Unchained 256-color mode").
+; the latches and a write stores them: one LDI copies four pixels.
 ;
 ; Video RAM addresses here are groups: the CPU address in the VGA window
 ; plus 0x10000 for each Oak segment (OAK_READ_SEGMENT, OAK_WRITE_SEGMENT).
@@ -26,8 +25,7 @@
         .equ VISIBLE_TILES, 33          ; tile columns that a pan of 1-3 pixels shows
 
 ; ---- The pages --------------------------------------------------------------
-; Each page is a forward-moving buffer (15-oak-drawing.md, "Scrolling
-; sideways through a long playfield"): world group g of pixel row y is at
+; Each page is a forward-moving buffer: world group g of pixel row y is at
 ; page_origin + PAGE_PITCH x y + g. The start address moves forward as the
 ; picture scrolls, so a column is drawn one time and stays in place.
 ; PAGE_PITCH is at least two groups wider than the 66 groups that a pan

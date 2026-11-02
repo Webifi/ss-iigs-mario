@@ -1,65 +1,14 @@
-; The input of the game: the ADB keyboard, the J13 keyboard of a ROM 00 or
-; ROM 01 IIgs, the joystick of the game port and the two pads of a SNES MAX
-; adapter become the pads of the two players, in the bit order of the
-; original's pads (input_pads), and the menu key. The actions are the eight
-; buttons of each player's pad and the menu key.
+; Collect keyboard and controller input for both players.
+; Apple Desktop Bus (ADB) keyboards, the J13 keyboard on ROM 00 and 01
+; machines, the game-port joystick and two SNES MAX pads become the game's
+; pad bits and menu key. clock.s calls input_tick and input_capture from
+; interrupts; the main loop calls input_frame and input_idle.
+; The keyboard GLU is the interface to the keyboard microcontroller. DOC
+; is the IIgs sound chip, whose timer supplies the input ticks.
 ;
-; How the input flows:
-;   - The DOC timer interrupt calls input_tick at each tick (4 in each
-;     picture of the mode, about 240 Hz, src/clock.s): it counts the tick
-;     (inputClock, the time of the events) and runs the J13 work of a tick.
-;   - Each interrupt, the DOC timer's and the ADB GLU's, ends with
-;     input_capture (src/clock.s clock_irq). It reads the ADB keyboard bytes
-;     from the GLU and the J13 keyboard (src/input_adb.s, src/input_j13.s),
-;     and puts each key press and release, with the tick count, in the event
-;     ring inputRing. input_start turns on the GLU's data and mouse
-;     interrupts, so each ADB byte is read when it comes.
-;   - The main loop calls input_frame once for each frame of the original
-;     (60.1 Hz). It applies the events of the ring (drain), reads the devices
-;     that have no events (the joystick and the pads, src/input_devices.s),
-;     and writes input_pads: the held buttons and the buttons pressed since
-;     the last frame. A key that two sources hold stays held until both let
-;     it go. Each key changes the counts of the actions that its bindings
-;     give (src/input_bindings.s), so two keys of one action work together.
-;   - The main loop calls input_idle while it waits for the next frame:
-;     there the joystick axes are read, which takes 1.78 ms of waiting
-;     for the paddle timers. When no wait came, input_frame reads them.
-;   - The menu key (ESC, or a key bound to ACTION_MENU) makes input_frame
-;     return carry set; the main loop then runs options_menu (src/menu.s).
-;
-; Memory: the code and its data are in the INPUT segment (bank 2); input_pads
-; is in SYSRAM (bank 0). The code runs with the data bank = its own bank
-; (absolute addresses), reaches other banks with long addresses, and uses no
-; direct page, so it keeps the caller's D. Only the disk calls set D = 0
-; (src/input_disk_bridge.s).
-;
-; Hardware rules (Apple IIgs Hardware Reference; Second Sight reference
-; docs/reference/z180-io-ports.md, "Apple event addresses"):
-;   - None of the registers that the play reads (KBD, KBDSTRB, KEYMODREG,
-;     DATAREG, KMSTATUS, MOUSEDATA, BUTN0, BUTN1, PADDL0, PADDL1, PTRIG,
-;     VERTCNT, the slot I/O of the adapter, never in slot 3) raises a Second
-;     Sight event, so the input never disturbs the packet stream of the card.
-;
-; Routines (the interface, JSL):
-;   input_start    the devices and the settings at the start
-;   input_tick     one DOC timer tick: the event time and the J13 work
-;   input_capture  the ADB capture (from each interrupt)
-;   input_frame    the pads of one frame, and the menu key
-;   input_idle     the joystick axes, in the main loop's wait
-;   input_keep_holes  the screen holes of the boot (src/input_disk_bridge.s)
-;   options_menu   the options menu (src/menu.s)
-;   monitor_sense  the monitor sense byte of the card's firmware, for the
-;                  clock at the start (src/menu.s)
-;   command_ready, command_done  the handshakes of a card command (src/menu.s)
-; Routines (in this file, JSR):
-;   input_sample   one sample: the J13 mode, the events up to this tick, the devices
-;   drain          apply the events of the ring up to inputUntil
-;   drain_transition  an edge that must wait for the next drain
-; The other files of the input (included below, in the scope of this
-; file): input_bindings.s, input_adb.s, input_j13.s, input_devices.s,
-; input_settings.s, input_audio.s, input_disk.s, input_disk_bridge.s,
-; menu.s, menu_text.inc.
-
+; Key presses and releases are queued with their tick time. A key held by
+; two sources stays down until both release it; bindings can map multiple
+; keys to the same action. input_frame also detects the menu key.
 .include "settings.inc"
 
 ; input_pads: the pads of this frame, for the game (src/frame.s read_pads):
@@ -75,6 +24,12 @@ input_pads: .res 2
 .a8
 .i16
 .scope input
+; Memory: the code and its data are in the INPUT segment (bank 2); input_pads
+; is in SYSRAM (bank 0). The code runs with the data bank = its own bank
+; (absolute addresses), reaches other banks with long addresses, and uses no
+; direct page, so it keeps the caller's D. Only the disk calls set D = 0
+; (src/input_disk_bridge.s).
+;
 KEY_DRAIN_MAX = 4096         ; input_start: the most DATAREG bytes of the boot to drop
 J13_ESCAPE = 0               ; j13Mode: the J13 code looks only for ESC
 J13_MENU = 1                 ; j13Mode: the options menu and the title: every J13 key
@@ -171,6 +126,10 @@ input_start:
   plp
   rtl
 
+; The DOC timer interrupt calls input_tick at each tick (4 in each
+; picture of the mode, about 240 Hz, src/clock.s): it counts the tick
+; (inputClock, the time of the events) and runs the J13 work of a tick.
+
 ; ---------------------------------------------------------------------------
 ; input_tick: one DOC timer tick: count it (inputClock, the time of the
 ; events) and run the J13 work of a tick (the send alarm of a row read; in
@@ -210,6 +169,20 @@ input_tick:
 @done:
   plb
   rtl
+
+; Each interrupt, the DOC timer's and the ADB GLU's, ends with
+; input_capture (src/clock.s clock_irq). It reads the ADB keyboard bytes
+; from the GLU and the J13 keyboard (src/input_adb.s, src/input_j13.s),
+; and puts each key press and release, with the tick count, in the event
+; ring inputRing. input_start turns on the GLU's data and mouse
+; interrupts, so each ADB byte is read when it comes.
+
+; Hardware rules (Apple IIgs Hardware Reference for the IIgs registers):
+;   - None of the registers that the play reads (KBD, KBDSTRB, KEYMODREG,
+;     DATAREG, KMSTATUS, MOUSEDATA, BUTN0, BUTN1, PADDL0, PADDL1, PTRIG,
+;     VERTCNT, the slot I/O of the adapter, never in slot 3) raises a Second
+;     Sight event, so the input never disturbs the packet stream of the card.
+;
 
 ; ---------------------------------------------------------------------------
 ; input_capture: the ADB capture, at the end of each interrupt (the DOC
@@ -272,6 +245,18 @@ capture_adb:
 :
   jsl CaptureInput              ; returns A16
   rts
+
+; The main loop calls input_frame once for each frame of the original
+; (60.1 Hz). It applies the events of the ring (drain), reads the devices
+; that have no events (the joystick and the pads, src/input_devices.s),
+; and writes input_pads: the held buttons and the buttons pressed since
+; the last frame. A key that two sources hold stays held until both let
+; it go. Each key changes the counts of the actions that its bindings
+; give (src/input_bindings.s), so two keys of one action work together.
+
+; The menu key (ESC, or a key bound to ACTION_MENU) makes input_frame
+; return carry set; the main loop then runs options_menu (src/menu.s).
+;
 
 ; ---------------------------------------------------------------------------
 ; input_frame: the pads of this frame and the menu key, once for each frame
@@ -345,6 +330,10 @@ input_frame:
   lda f:menuOpen
   lsr a                         ; carry = menuOpen
   rtl
+
+; The main loop calls input_idle while it waits for the next frame:
+; there the joystick axes are read, which takes 1.78 ms of waiting
+; for the paddle timers. When no wait came, input_frame reads them.
 
 ; ---------------------------------------------------------------------------
 ; input_idle: the joystick axes in the main loop's wait for the next frame,

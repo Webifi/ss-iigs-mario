@@ -305,7 +305,7 @@ dirty_byte:
 ; Changes:  AF, HL, BBR (the art's window), CBR (the page's window)
 ; Keeps:    BC, DE, IX, IY
 ; Time:     about 800 clocks of instructions (368 of them the 8-row copy)
-;           plus the waits of the 32 video RAM accesses (15-oak-drawing.md)
+;           plus the waits of the 32 video RAM accesses
 ; Original: none
 ; ---------------------------------------------------------------------------
 draw_cell:

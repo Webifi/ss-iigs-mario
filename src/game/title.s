@@ -1,5 +1,5 @@
 ; The title mode: its four tasks, the title menu, the start of a game, the
-; world select and the title's demo (document 01, sections 3-8).
+; world select and the title's demo.
 ;
 ; Place in the game. mode_dispatch (src/game/frame.s) runs title_mode in
 ; each frame while mode is MODE_TITLE. Its tasks set up a whole game state
@@ -19,46 +19,16 @@
 ; continue), the menu's screen records (screen.s draw_mushroom_icon and
 ; draw_world_digit), and the start of a game.
 ;
-; The menu and the demo (01 section 5.2):
-;
-;   | State | Condition       | Event of a frame              | Next          |
-;   |-------|-----------------|-------------------------------|---------------|
-;   | Menu  | demo_timer > 0  | start, or A + start, alone    | the game      |
-;   | Menu  |                 | select alone (1 in 16 frames) | Menu: 1 <-> 2 |
-;   |       |                 |                               | players       |
-;   | Menu  |                 | B alone, world select on      | Menu: the     |
-;   |       |                 | (1 in 16 frames)              | next world    |
-;   | Menu  |                 | demo_timer reaches 0          | Demo          |
-;   | Demo  | demo_timer = 0  | start, A + start, select      | title task 0  |
-;   | Demo  |                 | the demo's steps end          | title task 0  |
-;   | Demo  |                 | the player loses a life       | title task 0  |
-;
-; "Alone" compares the OR of both pads whole: a start with any other button
-; held on either pad is no start. Each select press, and each B press with
-; the world select on, sets the demo back to its full wait, also when
-; select_timer makes the menu skip the press.
-;
-; Routines:
-;   title_mode           the task of the title mode ($8231)
-;   title_menu           the menu, the world select and the demo ($8245)
-;   null_pad             pad 1 empty, then one frame of play ($82BB)
-;   run_demo             one frame of play; the demo's end ($82C0)
-;   reset_title          the title from its task 0 again ($82C9)
-;   start_game           start pressed: a game begins ($82D8)
-;   set_world            both players at the first area of a world ($830E)
-;   step_world_select    the world select's next world ($829C)
-;   demo_pad             pad 1 of a frame of the demo ($836B)
-;
 ; Original routines: $8231-$838A.
 
-; ---- Values of the original program (01 section 9) ----------------------------
+; ---- Values of the original program ----------------------------
 SELECT_REPEAT_FRAMES = $10      ; select_timer: 16 frames between two select or B presses that count
 WORLD_SELECT_MASK = 7           ; the world select's ring: worlds 0-7
 PLAYERS_TOGGLE  = 1             ; two_players XOR this: 1 <-> 2 players
 MENU_SELECT     = 0             ; title_menu: the press is select
 MENU_WORLD      = 1             ;   the press is B with the world select on
-; The digit store (07 section 13).
-DIGITS_PLAYERS_SIZE = $18       ; both scores and both coin runs ($07DD-$07F4 of the original, 01 section 6)
+; The digit store.
+DIGITS_PLAYERS_SIZE = $18       ; both scores and both coin runs ($07DD-$07F4 of the original)
 
 ; The demo's steps (demo_steps, scripts/screen_data.py): two bytes a step.
 DEMO_STEP_FRAMES = 0            ; the frames of the step; 0 ends the demo
@@ -103,7 +73,7 @@ title_tasks:
         .addr init_game, screen_routines, game_setup, title_menu
 
 ; ---------------------------------------------------------------------------
-; title_menu: title task 3, each frame (01 section 5.1). Start or A + start
+; title_menu: title task 3, each frame. Start or A + start
 ; begins a game; select switches 1 and 2 players; B selects the next world
 ; after world 8 is won; in the demo, select or start ends the demo. Then
 ; one frame of play: pad 1 empty on the menu, the demo's bits in the demo.
@@ -113,8 +83,8 @@ title_tasks:
 ; picture off and no status split.
 ;
 ; Why the menu runs the game: only pad 1's byte moves the player in
-; game_core (09 section 7: player is 0 on the title), so on the menu the
-; player stands; pad 2 counts only for the menu's own tests (01 L7).
+; game_core (player is 0 on the title), so on the menu the
+; player stands; pad 2 counts only for the menu's own tests.
 ;
 ; In:       pad_bits (both pads), demo_timer, select_timer, world_select_on,
 ;           two_players; D = the player's record
@@ -123,6 +93,26 @@ title_tasks:
 ; Time:     about 50 cycles, then game_core
 ; Original: $8245-$82D7 (null_pad $82BB, run_demo $82C0, reset_title $82C9)
 ; ---------------------------------------------------------------------------
+; The menu and the demo:
+;
+;   | State | Condition       | Event of a frame              | Next          |
+;   |-------|-----------------|-------------------------------|---------------|
+;   | Menu  | demo_timer > 0  | start, or A + start, alone    | the game      |
+;   | Menu  |                 | select alone (1 in 16 frames) | Menu: 1 <-> 2 |
+;   |       |                 |                               | players       |
+;   | Menu  |                 | B alone, world select on      | Menu: the     |
+;   |       |                 | (1 in 16 frames)              | next world    |
+;   | Menu  |                 | demo_timer reaches 0          | Demo          |
+;   | Demo  | demo_timer = 0  | start, A + start, select      | title task 0  |
+;   | Demo  |                 | the demo's steps end          | title task 0  |
+;   | Demo  |                 | the player loses a life       | title task 0  |
+;
+; "Alone" compares the OR of both pads whole: a start with any other button
+; held on either pad is no start. Each select press, and each B press with
+; the world select on, sets the demo back to its full wait, also when
+; select_timer makes the menu skip the press.
+;
+
 title_menu:
 .a8
 .i8
@@ -162,20 +152,23 @@ title_menu:
 @world: jsr step_world_select
         bra null_pad
 ; The demo: pad 1 from the demo's steps. The original stores the pads' OR
-; into select_timer here (01 L2); no frame of the demo reads it, and the
+; into select_timer here; no frame of the demo reads it, and the
 ; title's next start clears it.
 @demo:  sta timers + TIMER_SELECT
         jsr demo_pad
         bcs reset_title                 ; the steps ended: no frame of play in this frame
         bra run_demo
+; Original address: $82BB.
 null_pad:
-        stz pad_bits                    ; pad 1: no button; pad 2's byte is never read here (01 L7)
+        stz pad_bits                    ; pad 1: no button; pad 2's byte is never read here
+; Original address: $82C0.
 run_demo:
         jsr game_core                   ; flow.s: one frame of play
         lda player_task
         cmp #PLAYER_TASK_LOSE_LIFE
         beq reset_title                 ; the demo's player lost a life
         rts
+; Original address: $82C9.
 reset_title:
         stz mode                        ; MODE_TITLE
         stz mode_task                   ; init_game in the next frame
@@ -190,7 +183,7 @@ reset_title:
 ; game). With A held, both players start in continue_world, the world of
 ; the last game over. Both players' hidden 1-up flags and the timer reload
 ; count go up, the second quest follows world_select_on, and both players'
-; score and coin digits are cleared (01 section 6).
+; score and coin digits are cleared.
 ;
 ; The world: world 1 (the title cleared it), the world select's, or with A
 ; continue_world; the first area of it (set_world).
@@ -202,7 +195,7 @@ reset_title:
 ; Changes:  A, X, Y, the flags
 ; Time:     once; about 150 cycles and load_area_pointer
 ; Original: $82D8-$830D. The original takes the A button from the carry of
-;           its pad value shifted left (01 L4); here the A bit.
+;           its pad value shifted left; here the A bit.
 ; ---------------------------------------------------------------------------
 start_game:
 .a8
@@ -213,10 +206,10 @@ start_game:
         beq @area
         lda continue_world
         jsr set_world
-@area:  jsr load_area_pointer           ; 06: the area of world, area_index
+@area:  jsr load_area_pointer ; the area of world, area_index
         inc player_record + PlayerRecord::hidden_1up
         inc other_record + PlayerRecord::hidden_1up
-        inc timer_reload                ; the area's time at the first entrance (03 L8: a count)
+        inc timer_reload                ; the area's time at the first entrance (a count)
         lda #MODE_GAME
         sta mode
         lda world_select_on
@@ -233,8 +226,7 @@ start_game:
 
 ; ---------------------------------------------------------------------------
 ; set_world: both players at the first area of world A. The waiting player's
-; record is written in a one-player game too; nothing reads it there (09
-; Q4).
+; record is written in a one-player game too; nothing reads it there.
 ;
 ; In:       A8 = the world (0-7)
 ; Out:      player_record and other_record: world = A, area_index = 0
@@ -242,7 +234,7 @@ start_game:
 ; Keeps:    A, X, Y, D
 ; Time:     20 cycles
 ; Original: $830E-$831C. The original leaves X = 0, which its world step
-;           uses as the index of its copy (01 L1); the port's copy does not
+;           uses as the index of its copy; the port's copy does not
 ;           need it.
 ; ---------------------------------------------------------------------------
 set_world:
@@ -282,7 +274,7 @@ step_world_select:
 ;
 ; demo_step counts the steps begun, as the original's: step k (1-21) uses
 ; entry k - 1 of demo_steps, where the original reads its two tables one
-; byte before their starts (01 L3).
+; byte before their starts.
 ;
 ; In:       demo_step, demo_step_timer
 ; Out:      carry set: the demo is over (pad 1 unchanged); else carry clear,

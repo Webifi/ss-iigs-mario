@@ -1,11 +1,11 @@
 ; ---------------------------------------------------------------------------
 ; area.s: the areas of the game: the area records, the column builder's
-; steps, the enemy spawn records and the area changes (document 06).
+; steps, the enemy spawn records and the area changes.
 ;
 ; Place in the game. The original makes each column of an area during play
 ; from its compact area list: at each 32 pixels of scroll its column builder
 ; runs one "set" of eight steps, one step a frame, which builds two metatile
-; columns and sends them to the picture chip (06 section 11). The area lists
+; columns and sends them to the picture chip. The area lists
 ; never change, so scripts/area_data.py runs the builder's rules at build
 ; time over every area list, from every start page and after every loop
 ; rewind, and writes for each column build of the original a record: the
@@ -17,38 +17,15 @@
 ; does:
 ;   - step_column_builder: one step; build_column_sets (the screen part,
 ;     screen task 8) runs whole sets at an area's start, 12 frames.
-;   - update_scroll_vars: the last step of game_core (03) and of the walk
+;   - update_scroll_vars: the last step of game_core and of the walk
 ;     after a world's end: one step a frame while a set runs, or a new set
 ;     after each 32 pixels of scroll.
 ;   - load_area_pointer, find_area_byte: the area byte of a world's slot,
-;     for the start of a level (03, 04, 07).
-;   - load_area_addresses: begin_area (03): the area's header values, its
+;     for the start of a level.
+;   - load_area_addresses: begin_area: the area's header values, its
 ;     records and spawn records, the builder at the start page.
 ;   - next_spawn_record, rewind_area_objects: the enemy list reader and the
-;     castle loops of the objects part (src/game/movement.s, 05a).
-;
-; The eight steps of a set (parser_task counts 8 down to 1 during the
-; steps, 0 between sets; 06 section 11):
-;
-;   | Step | parser_task | Work (original)                | Here                       |
-;   |------|-------------|--------------------------------|----------------------------|
-;   | 7    | 8           | build_column, an even column   | build_column: a record     |
-;   | 6    | 7           | draw_column_tiles, left half   | draw_column_tiles: COLUMN  |
-;   | 5    | 6           | draw_column_tiles, right half  | select_list_two            |
-;   | 4    | 5           | next_column                    | next_column                |
-;   | 3    | 4           | build_column, the odd column   | build_column: a record     |
-;   | 2    | 3           | draw_column_tiles, left half   | draw_column_tiles: COLUMN  |
-;   | 1    | 2           | draw_column_tiles, right half  | select_list_two            |
-;   | 0    | 1           | next_column                    | next_column                |
-;   | (after step 0)     | write_column_attributes        | select_list_two            |
-;
-; Each drawing step and the attribute step make list 2 the frame's screen
-; source, as the original's write select 6 does: list 1 waits in the same
-; five frames of each set (02 section 11.4). The COLUMN record carries both
-; cell columns and their palettes (src/packet_layout.inc), so the second
-; drawing step and the attribute step send no record of their own: the
-; original's two cell columns go out in two frames, but both are past the
-; picture's right edge then (the built columns run 128 pixels ahead).
+;     castle loops of the objects part (src/game/movement.s).
 ;
 ; Data in (scripts/area_data.py; its module header gives the formats and
 ; the ROM tables they come from; the structs below give the fields):
@@ -69,88 +46,31 @@
 ; each blob lies in one bank). D is free: an event that starts an enemy
 ; sets D to the enemy's record, and build_column keeps its caller's D.
 ;
-; Merged and split against the original:
-; - The parser (read_area_objects, dispatch_area_object,
-;   start_or_run_object), the object routines' drawing, fill_column_rows,
-;   the scenery and the terrain run at build time; their run-time work
-;   is the events below. build_column is the record's copy and its events;
-;   the original's collision store (fill_terrain_rows' end) is the copy of
-;   the record's collision column.
-; - The events are the run-time parts of build_vertical_pipe (the piranha
-;   plant), build_cannon_stack and build_pit (the records), build_end_castle
-;   (the castle flag), place_jump_spring, build_flagpole (the flag),
-;   build_axe (Bowser's palette), warp_zone_lock, toggle_scroll_lock,
-;   queue_wave_request, dispatch_area_object (the loop command's looks),
-;   change_scenery_and_color (the backdrop), build_coin_brick (its flag),
-;   build_hidden_extra_life (the block when its flag is set), and
-;   fill_column_rows' store past the column buffer (store_past_column).
-; - The two draw_column_tiles steps of a column are one COLUMN record and
-;   one select_list_two (the screen part, src/game/screen.s).
-; - step_enemy_list, step_list_two, step_list_three: one record of the port's
-;   list (the objects part's step_spawn_record).
-; - send_player_back's builder part (the parse page, the area list's
-;   place, page and page flag) is rewind_area_objects.
-; - The original's column address ($0720-$0721) is the ring column of the
-;   COLUMN record: column_in_buffer, the parse column mod 32.
-;
 ; Original routines: $92B0-$9CB3 (the builder and the loader of the area
 ; lists), $AF6F-$AF92 (update_scroll_vars), $C08C-$C0CB (send_player_back,
 ; its builder part), $C144-$C26B (the reading of the enemy list).
 ;
-; Routines:
-;   find_area_byte           the area byte of the world's slot ($9C13)
-;   load_area_pointer        area_byte and area_type of the world's slot ($9C03)
-;   area_type_from_byte      area_type of an area byte ($9C09)
-;   load_area_addresses      an area's header, records and start ($9C22)
-;   update_scroll_vars       game_core's builder step ($AF6F)
-;   step_column_builder      one step of a set ($92B0)
-;   next_column              the parser to the next column ($92DB)
-;   draw_area_column         the COLUMN record of the built column ($88AE)
-;   build_column             one column: its record ($93FC)
-;   call_event               the jump to an event's routine
-;   start_piranha_plant      event: a piranha plant in a pipe ($98F2)
-;   record_cannon            event: a cannon's record ($9A85)
-;   record_whirlpool         event: a whirlpool's record ($9B4B)
-;   start_castle_flag        event: the flag on the castle ($984B)
-;   start_jump_spring        event: a jump spring ($9AD6)
-;   start_flagpole_flag      event: the flagpole's flag ($99B1)
-;   select_bowser_palette    event: the axe's palette ($9A09)
-;   warp_zone_lock           event: a warp zone ($96F2)
-;   toggle_scroll_lock       event: the scroll lock flips ($970D)
-;   queue_wave_request       event: a wave of enemies ($972B)
-;   count_loop_looks         event: the looks at a loop command ($95DA)
-;   set_backdrop             event: a backdrop setting ($96E9)
-;   clear_coin_brick_flag    event: a coin brick ($9B14)
-;   place_hidden_1up         event: a hidden 1-up block ($9B01)
-;   store_past_column        event: the store past the column buffer ($9B9D)
-;   jump_to_column           event: the next record is elsewhere
-;   backloading_never_ends   event: a start page without an object
-;   find_free_enemy_slot     the first free enemy slot 0-4, else 5 ($994A)
-;   clear_enemies_of_kind    enemy slots 0-4 of a kind free ($9716)
-;   next_spawn_record        the spawn_* values of the next spawn record ($C144)
-;   rewind_area_objects      the builder 4 pages back at a missed loop ($C093)
-; ---------------------------------------------------------------------------
 
-; ---- Values of the original program (06 unless named) -----------------------
-SOURCE_BOWSER_PALETTE = 8       ; screen_source: Bowser's palette, the axe's (02 section 11.3)
+; ---- Values of the original program -----------------------
+SOURCE_BOWSER_PALETTE = 8       ; screen_source: Bowser's palette, the axe's
 AREA_TYPE_BITS  = $60           ; an area byte: bits 6-5 the type
 AREA_TYPE_SHIFT = 5
 AREA_NUMBER_MASK = $1F          ; bits 4-0 the list number within the type
-AREA_BYTE_MASK  = $7F           ; bit 7 is read by no reader of an area byte (06 section 1)
-COLUMN_STEPS    = 8             ; the steps of a set (06 section 11)
+AREA_BYTE_MASK  = $7F           ; bit 7 is read by no reader of an area byte
+COLUMN_STEPS    = 8             ; the steps of a set
 STEP_KIND       = 3             ; a step AND this: 3 a build, 2 a draw, 1 the second draw, 0 next_column
 SET_SCROLL      = 32            ; update_scroll_vars: the pixels of scroll for each set
 PAGE_COLUMNS    = 16            ; the metatile columns of a page
 BUFFER_RING_COLUMNS = 32        ; the collision buffers' ring: two pages; also the ring's metatile columns
-LOOP_BACK_PAGES = 4             ; send_player_back: the pages that the parser goes back (06 section 15)
-FIRST_FREE_ENEMY = 0            ; find_free_enemy_slot: enemy slots 0-4 (06 section 5)
+LOOP_BACK_PAGES = 4             ; send_player_back: the pages that the parser goes back
+FIRST_FREE_ENEMY = 0            ; find_free_enemy_slot: enemy slots 0-4
 LAST_FREE_ENEMY = 4
 CASTLE_FLAG_Y   = $90           ; build_end_castle: the flag's Y on the castle
 FLAG_Y          = $30           ; build_flagpole: the flag's Y at the top of the pole
 FLAG_SCORE_START_Y = $B0        ; build_flagpole: the Y of the flagpole's score number
 NO_WAVE         = 0             ; frenzy_queue: no request
-WARP_ZONE_WORLD_1 = 4           ; warp_zone in world 1; + 1 elsewhere, + 2 in a ground area (06 section 14).
-                                ; The same number is write_screen_text's text (02 section 16)
+WARP_ZONE_WORLD_1 = 4           ; warp_zone in world 1; + 1 elsewhere, + 2 in a ground area.
+                                ; The same number is write_screen_text's text
 OBJECT_Y_HIGH   = Object::y_pos + 1 ; y_pos: the pixel row, then Y high (state.inc)
 flag_score_pixel = flag_score_y + 1 ; flag_score_y: the fraction, then the Y (state.inc)
 
@@ -162,7 +82,7 @@ flag_score_pixel = flag_score_y + 1 ; flag_score_y: the fraction, then the Y (st
 .struct AreaColumn
         metatiles       .res ::METATILE_ROWS ; the metatiles, row 0 first (the screen's column)
         collision       .res ::METATILE_ROWS ; the collision buffer column: a metatile, or 0 for one
-                                             ; that the collision tests do not see (06 section 9)
+                                             ; that the collision tests do not see
 .endstruct
 
 ; area_programs: one ColumnRecord for each column build of the original, in
@@ -188,7 +108,7 @@ NO_EVENTS_SIZE  = ColumnRecord::events ; a record without events: its column wor
 AREA_BYTES      = $80
 START_PAGES     = 32            ; begin_area's start page, 0-31 (an entrance page has 5 bits)
 .struct AreaRecord
-        entrance        .byte   ; the header's entrance, 0-7 (06 section 3)
+        entrance        .byte   ; the header's entrance, 0-7
         timer_setting   .byte   ; its time setting, 0-3
         backdrop        .byte   ; its backdrop setting, 0 or 4-7
         area_style      .byte   ; its ledge style, 0-2
@@ -253,7 +173,7 @@ spawn_list:     .res 2          ; the offset in spawn_records of the area's firs
 ; find_area_byte: the area byte of the current player's world and area
 ; number (the slot in the world's play order). The game's area numbers stay
 ; inside the world's slots: the last slot of a world ends in the victory
-; mode, which starts the next world at area 0 (03), so no read passes the
+; mode, which starts the next world at area 0, so no read passes the
 ; end of area_slots (the original would read the table after it).
 ;
 ; In:       A8 I8; player_record world (0-7) and area_index
@@ -277,8 +197,8 @@ find_area_byte:
 ; ---------------------------------------------------------------------------
 ; load_area_pointer: the current player's area: area_byte from the world and
 ; the area number, and its area_type. The start of a game, the next world,
-; the title and its demo, a restart after a lost life (03) and the next area
-; of a level (04 go_to_next_area) call it.
+; the title and its demo, a restart after a lost life and the next area
+; of a level (go_to_next_area) call it.
 ;
 ; In:       A8 I8; player_record world and area_index
 ; Out:      area_byte; A = area_type, stored
@@ -317,16 +237,16 @@ area_type_from_byte:
 
 ; ---------------------------------------------------------------------------
 ; load_area_addresses: the start of the area of area_byte at page parse_page
-; (begin_area, 03, sets both and column_in_buffer first). The original reads
+; (begin_area sets both and column_in_buffer first). The original reads
 ; the area list's header here and starts its parser on the list; the port
 ; takes the header values and the first record from page parse_page from
 ; the area's record: the build ran the parser, its backloading pass over the
-; pages before the start page included (06 section 7).
+; pages before the start page included.
 ;
 ; The builder's start: no column of the area built yet (parse_column 0,
 ; parser_task 0), as begin_area's memory clear leaves the original's. The
 ; spawn list starts at its first record (enemy_offset 0). The header values
-; are those that begin_area's clear and the header leave (06 section 3: a
+; are those that begin_area's clear and the header leave (a
 ; header without a backdrop setting or the cloud flag leaves them 0).
 ;
 ; In:       A8 I8; area_byte; parse_page = the start page (0-31)
@@ -337,7 +257,7 @@ area_type_from_byte:
 ; Changes:  A, X, the flags; A8 I8 at the exit
 ; Keeps:    Y, D
 ; Time:     about 200 cycles, once for each area start
-; Original: $9C22-$9CB3; the builder parts of begin_area $8FE4-$9060 (03)
+; Original: $9C22-$9CB3; the builder parts of begin_area $8FE4-$9060
 ; ---------------------------------------------------------------------------
 load_area_addresses:
 .a8
@@ -392,12 +312,12 @@ load_area_addresses:
 
 ; ---------------------------------------------------------------------------
 ; update_scroll_vars: the area builder's step of a frame of play, the last
-; step of game_core (03) and of the walk after a world's end (victory_walk).
+; step of game_core and of the walk after a world's end (victory_walk).
 ; A set runs one step a frame; a new set starts after each 32 pixels of
 ; scroll (scroll_32, which scroll_screen adds to), with list 2 empty. No
 ; step runs in a frame in which a coin or the axe was erased (list 2 is the
 ; source already: erase_coin_or_axe), so such a frame delays the builder by
-; one frame (06 section 11).
+; one frame.
 ;
 ; The original's scroll test is signed: a new set starts only when
 ; scroll_32 - 32 is 0-$7F. scroll_32 stays far below that.
@@ -438,7 +358,7 @@ update_scroll_vars:
 ; down; after the last step (0) it is 0 again and list 2 is the source once
 ; more (the original's attribute records).
 ;
-; parser_task is read by enemies_and_loops (05a): in the frame after step 7
+; parser_task is read by enemies_and_loops: in the frame after step 7
 ; (parser_task 7) no free enemy slot reads the spawn list.
 ;
 ; In:       A8 I8; parser_task (0 between sets)
@@ -447,6 +367,29 @@ update_scroll_vars:
 ; Time:     about 40 cycles + the step's
 ; Original: $92B0-$92C7, run_column_task $92C8-$92DA
 ; ---------------------------------------------------------------------------
+; The eight steps of a set (parser_task counts 8 down to 1 during the
+; steps, 0 between sets):
+;
+;   | Step | parser_task | Work (original)                | Here                       |
+;   |------|-------------|--------------------------------|----------------------------|
+;   | 7    | 8           | build_column, an even column   | build_column: a record     |
+;   | 6    | 7           | draw_column_tiles, left half   | draw_column_tiles: COLUMN  |
+;   | 5    | 6           | draw_column_tiles, right half  | select_list_two            |
+;   | 4    | 5           | next_column                    | next_column                |
+;   | 3    | 4           | build_column, the odd column   | build_column: a record     |
+;   | 2    | 3           | draw_column_tiles, left half   | draw_column_tiles: COLUMN  |
+;   | 1    | 2           | draw_column_tiles, right half  | select_list_two            |
+;   | 0    | 1           | next_column                    | next_column                |
+;   | (after step 0)     | write_column_attributes        | select_list_two            |
+;
+; Each drawing step and the attribute step make list 2 the frame's screen
+; source, as the original's write select 6 does: list 1 waits in the same
+; five frames of each set. The COLUMN record carries both
+; cell columns and their palettes (src/packet_layout.inc), so the second
+; drawing step and the attribute step send no record of their own: the
+; original's two cell columns go out in two frames, but both are past the
+; picture's right edge then (the built columns run 128 pixels ahead).
+;
 step_column_builder:
 .a8
 .i8
@@ -510,8 +453,7 @@ next_column:
 ; ---------------------------------------------------------------------------
 ; draw_area_column: the COLUMN record of the column that the step before
 ; built, at its ring column: the collision buffer column, which is the
-; world's metatile column mod 32, as the ring's (06 section 9, 02 section
-; 25).
+; world's metatile column mod 32, as in the ring.
 ;
 ; In:       A8 I8; column_in_buffer; column_metatiles
 ; Out:      draw_column_tiles' (screen.s): the record; list 2 the source
@@ -530,10 +472,10 @@ draw_area_column:
 ; build_column: the column of the parser, as the original builds it at steps
 ; 7 and 3: its events in the original's order, then its 13 metatiles into
 ; column_metatiles (draw_column_tiles sends them at the next step; the
-; collision part reads them past its buffers, 07) and its 13 collision bytes
+; collision part reads them past its buffers) and its 13 collision bytes
 ; into the collision buffer column of column_in_buffer. The events come
 ; first, as in the original, whose object routines run before the column's
-; store into the collision buffer (06 section 6).
+; store into the collision buffer.
 ;
 ; A record: its column word (the column's offset in area_columns; bit 15
 ; COLUMN_HAS_EVENTS: an event count and the events follow), the events of 5
@@ -558,6 +500,30 @@ draw_area_column:
 ; Original: $93FC-$9503 (build_column, fill_terrain_rows); the run-time
 ;           parts of the object routines are the event routines
 ; ---------------------------------------------------------------------------
+; Merged and split against the original:
+; - The parser (read_area_objects, dispatch_area_object,
+;   start_or_run_object), the object routines' drawing, fill_column_rows,
+;   the scenery and the terrain run at build time; their run-time work
+;   is the events below. build_column is the record's copy and its events;
+;   the original's collision store (fill_terrain_rows' end) is the copy of
+;   the record's collision column.
+; - The events are the run-time parts of build_vertical_pipe (the piranha
+;   plant), build_cannon_stack and build_pit (the records), build_end_castle
+;   (the castle flag), place_jump_spring, build_flagpole (the flag),
+;   build_axe (Bowser's palette), warp_zone_lock, toggle_scroll_lock,
+;   queue_wave_request, dispatch_area_object (the loop command's looks),
+;   change_scenery_and_color (the backdrop), build_coin_brick (its flag),
+;   build_hidden_extra_life (the block when its flag is set), and
+;   fill_column_rows' store past the column buffer (store_past_column).
+; - The two draw_column_tiles steps of a column are one COLUMN record and
+;   one select_list_two (the screen part, src/game/screen.s).
+; - step_enemy_list, step_list_two, step_list_three: one record of the port's
+;   list (the objects part's step_spawn_record).
+; - send_player_back's builder part (the parse page, the area list's
+;   place, page and page flag) is rewind_area_objects.
+; - The original's column address ($0720-$0721) is the ring column of the
+;   COLUMN record: column_in_buffer, the parse column mod 32.
+;
 build_column:
 .a8
 .i8
@@ -660,7 +626,7 @@ call_event:
 ; left column, in the first free enemy slot 0-4; none when all five are in
 ; use. The first area of world 1 (world and area number both 0) has no
 ; plants; so have the areas that its pipes lead to, where the area number
-; stays 0 (06 section 4). The plant's start (start_piranha, 05a) sets its
+; stays 0. The plant's start (start_piranha) sets its
 ; speed and its low and high Y.
 ;
 ; In:       A8 I8; event_position = the plant's world X (the pipe's middle);
@@ -691,7 +657,7 @@ start_piranha_plant:
         sta Object::y_pos
         lda #KIND_PIRANHA
         sta Object::kind
-        jmp start_piranha               ; 05a: D = the plant's record
+        jmp start_piranha ; D = the plant's record
 @done:
 .a8
 .i8
@@ -702,7 +668,7 @@ start_piranha_plant:
 ; cannon_page, cannon_x and cannon_y at cannon_next, which moves on. The
 ; cannons (build_cannon_stack) use the records 0-5; the whirlpools
 ; (build_pit, the first column of a pit in a water area) go back to record
-; 0 after record 4. run_cannons and pull_in_whirlpools (05a) read them.
+; 0 after record 4. run_cannons and pull_in_whirlpools read them.
 ;
 ; In:       A8 I8; event_position = the cannon's world X, or the
 ;           whirlpool's left edge (one column left of the pit);
@@ -750,8 +716,7 @@ store_record:
 ; start_castle_flag: the flag on the castle at the end of a level, at the
 ; castle's middle column (not on page 0, where a level starts at a castle).
 ; It takes the first free enemy slot 0-4, and slot 5 when all five are in
-; use: the original does not test find_free_enemy_slot's carry here (06
-; L1), so the flag then writes over the power-up or the flagpole flag.
+; use: the original does not test find_free_enemy_slot's carry here, so the flag then writes over the power-up or the flagpole flag.
 ;
 ; In:       A8 I8; event_position = the flag's world X
 ; Out:      the slot: x_pos, Y high, active, y_pos, kind
@@ -763,7 +728,7 @@ store_record:
 start_castle_flag:
 .a8
 .i8
-        jsr find_free_enemy_slot        ; slot 5 when none is free (06 L1)
+        jsr find_free_enemy_slot        ; slot 5 when none is free
         a16
         lda event_position
         sta Object::x_pos
@@ -778,9 +743,9 @@ start_castle_flag:
 
 ; ---------------------------------------------------------------------------
 ; start_jump_spring: a jump spring, an enemy in the first free enemy slot
-; 0-4, or slot 5 when all five are in use (06 L1, as start_castle_flag). Its
+; 0-4, or slot 5 when all five are in use (as start_castle_flag). Its
 ; rest Y is its Y. Its active byte goes up by 1: it is 2 when the spring
-; takes slot 5 from an active object (06 section 4).
+; takes slot 5 from an active object.
 ;
 ; In:       A8 I8; event_position = the spring's world X; event_value = its Y
 ; Out:      the slot: x_pos, y_pos, spring_rest_y, kind, Y high, active + 1
@@ -792,7 +757,7 @@ start_castle_flag:
 start_jump_spring:
 .a8
 .i8
-        jsr find_free_enemy_slot        ; slot 5 when none is free (06 L1)
+        jsr find_free_enemy_slot        ; slot 5 when none is free
         a16
         lda event_position
         sta Object::x_pos
@@ -811,7 +776,7 @@ start_jump_spring:
 ; start_flagpole_flag: the flag of the flagpole, always in enemy slot 5,
 ; 8 pixels left of the pole, at its top; the flagpole's score number starts
 ; at Y $B0. Its active byte goes up by 1. Its Y high is not written: it
-; keeps what slot 5 held (06 L2: 0 after the area's start, or what a
+; keeps what slot 5 held (0 after the area's start, or what a
 ; power-up in slot 5 left).
 ;
 ; In:       A8 I8; event_position = the flag's world X
@@ -832,7 +797,7 @@ start_flagpole_flag:
         sta Object::x_pos
         a8
         lda #FLAG_Y
-        sta Object::y_pos               ; the pixel row only (06 L2)
+        sta Object::y_pos               ; the pixel row only
         lda #FLAG_SCORE_START_Y
         sta flag_score_pixel
         lda #KIND_FLAG
@@ -842,8 +807,8 @@ start_flagpole_flag:
 
 ; ---------------------------------------------------------------------------
 ; select_bowser_palette: the axe's column: the next frame sends Bowser's
-; palette (02 section 11.3, source 8). Like every ROM list, it drops the
-; frame's list 1 records (06 L10, 02 L2).
+; palette (source 8). Like every ROM list, it drops the
+; frame's list 1 records.
 ;
 ; In:       A8 I8
 ; Out:      screen_source = SOURCE_BOWSER_PALETTE
@@ -861,11 +826,10 @@ select_bowser_palette:
 
 ; ---------------------------------------------------------------------------
 ; warp_zone_lock: a warp zone: warp_zone gets its number (4 in world 1, 6 in
-; a ground area of another world, else 5; enter_pipe_check (07) reads its
+; a ground area of another world, else 5; enter_pipe_check reads its
 ; pipes' worlds by it), the warp zone text with its three world digits goes
 ; into list 1 from its start (write_screen_text; the records that list 1
-; held are lost, 02 L6), the piranha plants go, and the scroll lock flips
-; (06 section 14).
+; held are lost), the piranha plants go, and the scroll lock flips.
 ;
 ; In:       A8 I8; player_record world; area_type
 ; Out:      warp_zone; list 1 = the text; the plants' slots free;
@@ -896,7 +860,7 @@ warp_zone_lock:
 
 ; ---------------------------------------------------------------------------
 ; toggle_scroll_lock: the scroll lock's bit 0 flips. While it is set the
-; screen does not scroll (04).
+; screen does not scroll.
 ;
 ; In:       A8 I8
 ; Out:      scroll_lock
@@ -916,8 +880,7 @@ toggle_scroll_lock:
 ; ---------------------------------------------------------------------------
 ; queue_wave_request: a wave object: frenzy_queue gets the wave's enemy kind,
 ; or no request while an enemy slot 0-4 holds that kind. The search reads
-; the kind bytes only, so a free slot that keeps the kind counts too (05a
-; L25). read_enemy_spawns (05a) starts the request in the next free slot.
+; the kind bytes only, so a free slot that keeps the kind counts too. read_enemy_spawns starts the request in the next free slot.
 ;
 ; In:       A8 I8; event_value = the wave's kind (wave_kinds: $14, $17, $18)
 ; Out:      frenzy_queue
@@ -961,8 +924,8 @@ queue_wave_request:
 ; ---------------------------------------------------------------------------
 ; count_loop_looks: the looks at a castle maze's loop command object in this
 ; column. Each time that a free object slot of the parser looks at it, even
-; before its column, loop_command goes up by 1 (06 section 7); the build
-; counts the column's looks. The loop check (05a check_loop) runs while
+; before its column, loop_command goes up by 1; the build
+; counts the column's looks. The loop check (check_loop) runs while
 ; loop_command is not 0 and clears it.
 ;
 ; In:       A8 I8; event_value = the looks (1-255)
@@ -972,6 +935,7 @@ queue_wave_request:
 ; Time:     20 cycles
 ; Original: $95D4-$95DC (dispatch_area_object)
 ; ---------------------------------------------------------------------------
+; Original address: $95DA.
 count_loop_looks:
 .a8
 .i8
@@ -985,9 +949,9 @@ count_loop_looks:
 ; set_backdrop: a scenery change object with a backdrop setting (4-7). The
 ; build applies the foreground, the background and the terrain of the
 ; scenery changes; only the backdrop is read at run time
-; (queue_backdrop_color at the area's start, queue_player_colors later: 02).
+; (queue_backdrop_color at the area's start, queue_player_colors later).
 ; The lists change the backdrop only at page 0 column 6, in the area's
-; first 24 columns, so the start's screen task 10 sends it (06 section 3).
+; first 24 columns, so the start's screen task 10 sends it.
 ;
 ; In:       A8 I8; event_value = the setting
 ; Out:      backdrop
@@ -996,6 +960,7 @@ count_loop_looks:
 ; Time:     12 cycles
 ; Original: $96E2-$96F1 (change_scenery_and_color)
 ; ---------------------------------------------------------------------------
+; Original address: $96E9.
 set_backdrop:
 .a8
 .i8
@@ -1005,7 +970,7 @@ set_backdrop:
 
 ; ---------------------------------------------------------------------------
 ; clear_coin_brick_flag: a brick with coins: the flag that starts the coin
-; time at its first bump is clear again (05a section 17.2).
+; time at its first bump is clear again.
 ;
 ; In:       A8 I8
 ; Out:      coin_brick_flag = 0
@@ -1024,7 +989,7 @@ clear_coin_brick_flag:
 ; place_hidden_1up: a hidden 1-up block: it is in the column only while the
 ; current player's hidden 1-up flag is set, and the flag then clears, so a
 ; later hidden 1-up block of the player's game is not built until the flag
-; is set again (06 section 4). The build makes the column with the block
+; is set again. The build makes the column with the block
 ; too; build_column copies that one.
 ;
 ; In:       A8 I8; event_position = the offset in area_columns of the
@@ -1053,11 +1018,11 @@ place_hidden_1up:
 ; ---------------------------------------------------------------------------
 ; store_past_column: a mushroom ledge at row 11: the original draws its stem
 ; from row 13, one byte past its 13-byte column buffer, into the byte after
-; it: hammer_owner of misc slot 0 (05a section 23) gets the stem's metatile.
+; it: hammer_owner of misc slot 0 gets the stem's metatile.
 ; Its values (an enemy number 0-5, or this one) never meet a rule of
 ; fill_column_rows that keeps a byte, so the store always happens. In the
 ; game it happens in three columns of world 4-3. The collision part reads
-; the same byte past its buffers (07).
+; the same byte past its buffers.
 ;
 ; In:       A8 I8; event_value = the metatile
 ; Out:      misc slot 0's hammer_owner
@@ -1102,14 +1067,14 @@ jump_to_column:
 ; without an object. The original's parser skips the objects of the pages
 ; before the start page in its first column and stops at the first object
 ; of the start page; with none there it repeats that pass forever, and the
-; game stops in screen task 8 with the picture off (06 section 19). The
+; game stops in screen task 8 with the picture off. The
 ; start pages that the game's tables give all have objects (the build
 ; asserts it). Another page comes only from an entrance page that outlives
-; a lost life: return_to_game does not clear entrance_alt (03 section
-; 4.17), which the end of an entry clears (04 player_enters_area), so a
+; a lost life: return_to_game does not clear entrance_alt;
+; player_enters_area clears it at the end of an entry, so a
 ; life lost during an entry would restart the level's area at that page,
 ; and in a two-player game the other player's area; the timer and the
-; enemy contacts take no life then (05a section 6.1, 07 section 9). The
+; enemy contacts take no life then. The
 ; port stops in the same frame as the original.
 ;
 ; In:       nothing
@@ -1164,7 +1129,7 @@ find_free_enemy_slot:
 ; ---------------------------------------------------------------------------
 ; clear_enemies_of_kind: every enemy slot 0-4 whose kind is A becomes free
 ; (its active byte 0). warp_zone_lock removes the piranha plants with it,
-; the flagpole's grab (07 grab_climbable) the cannons' bullet bills.
+; the flagpole's grab (grab_climbable) the cannons' bullet bills.
 ;
 ; In:       A8 I8; A = the kind
 ; Out:      the slots of that kind free
@@ -1205,8 +1170,8 @@ clear_enemies_of_kind:
 
 ; ---------------------------------------------------------------------------
 ; next_spawn_record: the spawn record that enemy_offset names in the area's
-; list, for read_enemy_spawns (05a). The build resolved the enemy list's
-; page rules (05a section 20.2 steps 6-7, L33): each record has its page,
+; list, for read_enemy_spawns. The build resolved the enemy list's
+; page rules: each record has its page,
 ; and a page skip that the reader takes is a record of kind SPAWN_SKIP,
 ; where slot 5 stops as at the original's page skip.
 ;
@@ -1253,11 +1218,11 @@ next_spawn_record:
         rts
 
 ; ---------------------------------------------------------------------------
-; rewind_area_objects: the area builder's part of send_player_back (05a), at
+; rewind_area_objects: the area builder's part of send_player_back, at
 ; a missed loop of a castle maze: the parse page goes back 4 pages, and the
 ; builder goes on with the records after the rewind. The original sets its
 ; list place to the check's rewind offset with the area object page 4 back
-; and the page flag clear, and keeps its object slots (06 section 15); the
+; and the page flag clear, and keeps its object slots; the
 ; build ran that from every state that the builder can be in at a check.
 ; The record that the builder reads next names that state: at a check
 ; before the build of the check column (between two sets) it is that

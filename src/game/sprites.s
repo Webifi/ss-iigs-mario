@@ -1,26 +1,25 @@
 ; The drawing of every object into the 64-entry sprite list, with the
-; screen place and the offscreen bits that each drawing uses (document 11:
-; the original's $E435-$F2C9).
+; screen place and the offscreen bits that each drawing uses (the original's $E435-$F2C9).
 ;
 ; The game logic of a frame writes the list (state.inc sprite_list, the
 ; entry of packet_layout.inc: Y, tile, attributes, X); the next frame sends
-; it to the card, which shows it by the original picture chip's rules (11
-; section 1: lines Y + 1 to Y + 8, no wrap past column 255, the lower
-; sprite in front, the behind bit). Before the logic the frame
+; it to the card, which shows it by the original picture chip's rules: lines
+; Y + 1 to Y + 8, no wrap past column 255, the lower
+; sprite in front, the behind bit. Before the logic the frame
 ; (src/game/frame.s) hides sprites 1-63 and moves the objects' first
-; sprites (sprite_offset, 02 section 9). The object parts then call the
-; routines here in the engine's order (11 section 3):
-;   1. the fireballs, their bursts and the air bubbles (05a);
-;   2. for each enemy slot 0-5, the slot's routine (05b: an enemy, Bowser's
-;      halves, a lift, the vine, the power-up) and its score number (07);
-;   3. the player (03 game_core: check_player_offscreen,
+; sprites (sprite_offset). The object parts then call the
+; routines here in the engine's order:
+;   1. the fireballs, their bursts and the air bubbles;
+;   2. for each enemy slot 0-5, the slot's routine (an enemy, Bowser's
+;      halves, a lift, the vine, the power-up) and its score number;
+;   3. the player (game_core: check_player_offscreen,
 ;      player_screen_position, draw_player; the victory mode: the place
 ;      and draw_player only);
 ;   4. the block objects 1, then 0;
 ;   5. the misc objects 8 down to 0 (hammers, coins from blocks);
 ;   6. the flagpole flag in enemy slot 5.
 ; The lives screen draws the player once (draw_lives_screen_player).
-; Objects share sprites (11 section 2), and a later write wins for each
+; Objects share sprites, and a later write wins for each
 ; byte that it writes. So each drawing here writes the same bytes as the
 ; original, in the same order, the tiles, attributes and X bytes of the
 ; sprites that it hides too: the list is the original's byte for byte at
@@ -28,84 +27,20 @@
 ;
 ; In:  the object's record (D), sprite_offset, screen_left, screen_right,
 ;      frame_count, timer_hold, the timers, and what each header names.
-; Out: sprite_list; rel_x, rel_y and offscreen_bits (also read by 04, 05b,
-;      07); vertical_flip; player_frame, player_screen_x (the scroll of the
-;      next frame reads it, 04), player_anim_step, the animation timer,
+; Out: sprite_list; rel_x, rel_y and offscreen_bits (also read by player,
+;      enemy and collision code); vertical_flip; player_frame, player_screen_x
+;      (the scroll of the
+;      next frame reads it), player_anim_step, the animation timer,
 ;      throw_timer, player_resizing; and the state changes of the drawings
 ;      themselves: a hammer off the screen ends, a coin's number rises, a
 ;      fireball's burst steps and ends, an enemy below the screen is erased
-;      (clear_enemy_slot, 05b).
+;      (clear_enemy_slot).
 ;
 ; Data: the tiles, attributes and poses of every object and the offscreen
 ; tables come from the program through scripts/sprites_data.py, as
 ; labelled bytes in bank 0 (absolute reads, DBR = 0). The drawing rules of
 ; the enemy codes (draw_code_rules) are a table of this file, in the code's
 ; bank 1, read with long addressing.
-;
-; The original's routines, and where they are here:
-;   $F12A-$F17F  the screen positions: the entries and screen_position
-;   $F180-$F1D6  the offscreen entries and store_offscreen_bits
-;   $F1F6-$F281  find_x_offscreen, find_y_offscreen; scale_position_diff and
-;                the mask and margin tables become offscreen_step and the
-;                edge tables of the build
-;   $F282-$F2C9  draw_sprite_pair; draw_tile_pair ($EBB2) and
-;                draw_enemy_tile_pair ($EBAA) are the tile loads of its callers
-;   $E5B3-$E5C7  set_six_sprite_y and its entries; place_six_sprites ($E4AE)
-;                and hide_left_column ($EC4A) are the stores of their callers
-;   $E87D-$EBCC  draw_enemy with its steps (draw_flipped_bowser $E946,
-;                pick_hammer_bro_frame $E9CA, freeze_anim_check $EA29,
-;                defeated_flip_check $EA37, draw_enemy_rows $EA4B) and
-;                hide_enemy_offscreen ($EB64, with hide_enemy_row $EBB7 and
-;                hide_enemy_column $EBC1)
-;   $EEE9-$F129  draw_player and its routines (the size offset $F091 is
-;                size_action, offset_for_this_frame $F062 and
-;                offset_from_anim_step $F0D0 are pose_of_step and
-;                pose_at_step, fixed_frame_actions $F028 is fixed_pose)
-;   $EFA4 draw_lives_screen_player, $E5C8 draw_big_lift, $ED66
-;   draw_small_lift_sprites, $E435 draw_vine_stack, $E54B draw_flag_sprites,
-;   $E6D2 draw_item_sprite, $E4DC draw_spinning_hammer, $E686
-;   draw_spinning_coin (with its score part $E655), $EBD1 draw_bumped_block,
-;   $EC53 draw_brick_pieces (with check_left_edge_bit $EC46), $ECDE
-;   draw_player_fireball, $ECED draw_fire_piece_sprite, $ED09
-;   draw_fireball_burst, $ED17 draw_firework_burst, $EDE1 draw_air_bubble
-;
-; Routines (* the entries that other parts call):
-;   *player_screen_position, *enemy_screen_position,
-;   *fireball_screen_position, *bubble_screen_position,
-;   *misc_screen_position     rel_x, rel_y of the object's group
-;   *block_screen_position    the same for both pieces of a block object
-;   screen_position           the shared part
-;   *check_player_offscreen, *check_enemy_offscreen,
-;   *check_fireball_offscreen, *check_bubble_offscreen,
-;   *check_misc_offscreen, *check_block_offscreen
-;                             offscreen_bits of the object's group
-;   store_offscreen_bits      the shared part
-;   *find_x_offscreen         the object's 8-pixel columns off the screen
-;   find_y_offscreen          its 8-pixel rows off the screen
-;   offscreen_step            a distance from an edge as an edge table index
-;   set_row_mirror            the mirror of the rows of one drawing
-;   draw_sprite_pair          one row of two sprites
-;   hide_six_sprites, set_six_sprite_y, set_four_sprite_y,
-;   set_three_sprite_y, *set_two_sprite_y
-;                             one byte of six, four, three or two sprites
-;   *draw_enemy               an enemy: its pose, flips and mirror
-;   hide_enemy_offscreen      the enemy's columns and rows off the screen
-;   *draw_player              the player
-;   draw_player_frame         the player's pose drawn, the throw, the rows off
-;   choose_player_action      the pose of the player's action
-;   fixed_pose, size_action, pose_of_step, pose_at_step, animate_player
-;                             the steps of the action poses
-;   apply_size_change_frame   the pose of the size change
-;   check_player_attribs      rows drawn as a tile and its mirror
-;   draw_player_rows, draw_player_row
-;                             the player's rows
-;   *draw_lives_screen_player the player on the lives screen
-;   *draw_big_lift, *draw_small_lift_sprites
-;   *draw_vine_stack, *draw_flag_sprites, *draw_item_sprite
-;   *draw_spinning_hammer, *draw_spinning_coin
-;   *draw_bumped_block, *draw_brick_pieces
-;   *draw_player_fireball, *draw_fire_piece_sprite, *draw_fireball_burst,
-;   *draw_firework_burst, *draw_air_bubble
 ;
 ; Registers: A8 I8 at each entry and exit unless a header says otherwise.
 ; DBR = bank 0. D = the record of the object drawn (state.inc); "D any" in
@@ -115,37 +50,37 @@
 .a8
 .i8
 
-; ---- Values of the drawing (document 11) ------------------------------------
-SPRITE_PIXELS   = 8             ; a sprite's width and height; the step between rows and columns (11 section 1)
-BOWSER_DRAW_FRONT = 1           ; bowser_draw (05b): 1 the front half draws, 2 the rear half
+; ---- Values of the drawing ------------------------------------
+SPRITE_PIXELS   = 8             ; a sprite's width and height; the step between rows and columns
+BOWSER_DRAW_FRONT = 1           ; bowser_draw: 1 the front half draws, 2 the rear half
 
-; The objects' groups of sprites (11 section 2).
+; The objects' groups of sprites.
 PLAYER_SPRITES  = 8
 PLAYER_ROWS     = 4             ; the player's rows of two sprites
 BRICK_LOWER_SLOTS = 2           ; a block object's lower piece: the record two slots on (state.inc)
 POSE_ROW_BYTES  = 2             ; a row of a pose in the tile tables: the left tile, the right tile
-ENEMY_POSE_TILES = 6            ; an enemy pose: three rows; its second step is the next pose (rule O)
-PLAYER_POSE_TILES = 8           ; a player pose: four rows; the step adds this (11 section 9)
-; draw_enemy (11 section 7).
+ENEMY_POSE_TILES = 6            ; an enemy pose: three rows; its second step is the next pose
+PLAYER_POSE_TILES = 8           ; a player pose: four rows; the step adds this
+; draw_enemy.
 DRAW_CODE_BULLET = KIND_BULLET_FRENZY ; the drawing code of a bullet bill: the kind of a wave's bullet
-DRAW_CODE_FIRST_TURNED = 4      ; rule P: codes from 4 on turn over when defeated; 0-3 (koopas,
-                                ;   the buzzy beetle) take the shell poses (rule K)
-DRAW_CODE_PRINCESS = $15        ; rule C: the code of the princess or the retainer
-DRAW_CODE_BOWSER_FRONT = $16    ; rule E: Bowser's halves
+DRAW_CODE_FIRST_TURNED = 4      ; codes from 4 on turn over when defeated; 0-3 (koopas,
+                                ;   the buzzy beetle) take the shell poses
+DRAW_CODE_PRINCESS = $15        ; the code of the princess or the retainer
+DRAW_CODE_BOWSER_FRONT = $16    ; Bowser's halves
 DRAW_CODE_BOWSER_REAR = $17
 DRAW_CODE_FIRST_SPRING = $18    ; the jump spring's codes $18-$1A
 DRAW_CODES      = $1B           ; the codes of the tables
 DRAW_STATE_BITS = $1F           ; the draw state: the low 5 bits of the enemy's state
-MIRRORED_DRAW_STATE = 3         ; the draw state of the spring and the retainer (rules C, N): from 2
-                                ;   on the halves are mirrored (rule T)
-UPSIDE_DOWN     = 1             ; vertical_flip: rules D and P write 1; any value but 0 turns the enemy over
-GOOMBA_TURN_FRAMES = $08        ; rule F: FC bit 3 clear: the goomba's mirror
-BOWSER_REAR_RAISE = $10         ; rule H: a defeated Bowser's rear half, 16 lines higher
-LAKITU_LOW_FRENZY = $10         ; rules J and U: Lakitu's second pose while frenzy_timer is below this
-STEP_INTERVAL_LIMIT = 5         ; rule M: from this interval timer on, no second pose
-BLOOPER_STILL_INTERVAL = 1      ; rule M: a blooper at this interval timer keeps its first pose
-BLOOPER_DROP    = 3             ; rule M: the blooper's second pose, 3 lines lower
-; draw_player (11 section 9). The action indexes of player_action_poses;
+MIRRORED_DRAW_STATE = 3         ; the draw state of the spring and the retainer: from 2
+                                ;   on the halves are mirrored
+UPSIDE_DOWN     = 1             ; vertical_flip: the drawing code writes 1; any value but 0 turns the enemy over
+GOOMBA_TURN_FRAMES = $08        ; frame_count bit 3 clear: the goomba's mirror
+BOWSER_REAR_RAISE = $10         ; a defeated Bowser's rear half, 16 lines higher
+LAKITU_LOW_FRENZY = $10         ; Lakitu's second pose while frenzy_timer is below this
+STEP_INTERVAL_LIMIT = 5         ; from this interval timer on, no second pose
+BLOOPER_STILL_INTERVAL = 1      ; a blooper at this interval timer keeps its first pose
+BLOOPER_DROP    = 3             ; the blooper's second pose, 3 lines lower
+; draw_player. The action indexes of player_action_poses;
 ; the small player's are 8 on.
 PLAYER_ACTION_JUMP = 0
 PLAYER_ACTION_SWIM = 1
@@ -164,34 +99,34 @@ CLIMB_STEPS     = 2
 SKID_SPEED      = 9             ; a turn from this player_speed_abs on shows the skid
 SIZE_CHANGE_STEPS = 10          ; the size change: 10 steps; size_change_poses has the growing
                                 ;   steps, then the shrinking ones
-SIZE_STEP_FRAMES = 4            ; a size change step each 4 frames (FC and 3 = 0)
-SWIM_KICK_FRAMES = $04          ; FC bit 2 clear: the swim kick shows
+SIZE_STEP_FRAMES = 4            ; a size change step each 4 frames (frame_count and 3 = 0)
+SWIM_KICK_FRAMES = $04          ; frame_count bit 2 clear: the swim kick shows
 KICK_FOOT_BIG   = 0             ; swim_kick_foot_tiles: the big player's foot, the small player's
 KICK_FOOT_SMALL = 1
-LIVES_SCREEN_LAST_ATTR = ATTR_FLIP_X ; s8 on the lives screen: sprite 9's cleared attributes ($00,
-                                ;   leftover 3) with the mirror bit
+LIVES_SCREEN_LAST_ATTR = ATTR_FLIP_X ; s8 on the lives screen: sprite 9's cleared attributes ($00)
+                                ;   with the mirror bit
 ; The other objects.
 VINE_PART_SPRITES = 6
-VINE_ZIGZAG_X   = 6             ; the vine's right sprites, 6 pixels right of its left ones (s12)
+VINE_ZIGZAG_X   = 6             ; the vine's right sprites, 6 pixels right of its left ones
 VINE_SHOWN_LINES = $64          ; a vine sprite shows from the vine's start up to 99 lines above it
 FLAG_SCORE_GAP  = 12            ; the flag's score number, 12 right of its right column (20 of its X)
 FLAG_SCORE_SPRITE = 3           ; the score number's first sprite: s4
 FLAG_HIDE_COLUMNS = OFFSCREEN_COLUMN_1 | OFFSCREEN_COLUMN_2 | OFFSCREEN_COLUMN_3
 BIG_LIFT_SPRITES = 6
-SMALL_LIFT_GAP  = $80           ; the lower small lift, 128 lines below the upper one (s11)
-POWERUP_DROP    = 8             ; the power-up's rows start 8 lines below its Y (s14)
-HAMMER_SPIN_STEPS = 4           ; the hammer's spin steps, each 4 frames (FC shr 2)
+SMALL_LIFT_GAP  = $80           ; the lower small lift, 128 lines below the upper one
+POWERUP_DROP    = 8             ; the power-up's rows start 8 lines below its Y
+HAMMER_SPIN_STEPS = 4           ; the hammer's spin steps, each 4 frames (frame_count shr 2)
 HAMMER_HELD_STEP = 0            ; the step of a hammer in the hand, or while the game is frozen
-HAMMER_GONE_BITS = OFFSCREEN_ROWS | OFFSCREEN_COLUMN_1 | OFFSCREEN_COLUMN_2 ; s15: the hammer ends
-COIN_SPIN_STEPS = 4             ; the coin's tiles, each 2 frames (FC shr 1)
-BRICK_RIGHT_GAP = 6             ; s16: the right piece's X = 2 O - L + 6 + the two carries
-BRICK_SPIN_SHIFT = 4            ; s16: FC shifted left 4: bit 2 gives the X flip, bit 3 the Y flip
-BURST_STEPS     = 3             ; s17: the burst's steps, each 2 frames; the 7th frame ends it
-BURST_STEP_BITS = $07           ; s17: (state shr 1) and 7: the step
-BURST_CENTRE    = 4             ; s17: the burst's sprites start 4 left of and 4 above the fireball's
-FIRE_TILE_SHIFT = 2             ; s17: FC bit 2 gives the fireball's second tile, each 4 frames
-FIRE_FLIP_FRAMES = $08          ; s17: FC bit 3 flips the fireball both ways, each 8 frames
-EDGE_REACH      = $100          ; the edge tables cover distances 0-255 from an edge (11 section 5)
+HAMMER_GONE_BITS = OFFSCREEN_ROWS | OFFSCREEN_COLUMN_1 | OFFSCREEN_COLUMN_2 ; the hammer ends
+COIN_SPIN_STEPS = 4             ; the coin's tiles, each 2 frames (frame_count shr 1)
+BRICK_RIGHT_GAP = 6             ; the right piece's X = 2 O - L + 6 + the two carries
+BRICK_SPIN_SHIFT = 4            ; frame_count shifted left 4: bit 2 gives the X flip, bit 3 the Y flip
+BURST_STEPS     = 3             ; the burst's steps, each 2 frames; the 7th frame ends it
+BURST_STEP_BITS = $07           ; (state shr 1) and 7: the step
+BURST_CENTRE    = 4             ; the burst's sprites start 4 left of and 4 above the fireball's
+FIRE_TILE_SHIFT = 2             ; frame_count bit 2 gives the fireball's second tile, each 4 frames
+FIRE_FLIP_FRAMES = $08          ; frame_count bit 3 flips the fireball both ways, each 8 frames
+EDGE_REACH      = $100          ; the edge tables cover distances 0-255 from an edge
 
 ; ---- Variables of the drawing -------------------------------------------------
 .segment "AREASTATE"
@@ -202,26 +137,26 @@ sprite_row_mirror: .res 1       ; draw_sprite_pair: bit 7 set: the rows are mirr
 sprite_rows_left: .res 1        ; draw_player_row: the rows still to draw
 draw_first_sprite: .res 1       ; the offset of the drawn object's first sprite (the drawings)
 offscreen_column_bits: .res 1   ; store_offscreen_bits: the column bits while the rows are found
-enemy_draw_state: .res 1        ; draw_enemy: the draw state (rules C, F, I, N, P; read by K, T)
+enemy_draw_state: .res 1        ; draw_enemy: the draw state (used to select its pose)
 enemy_draw_status: .res 1       ; draw_enemy: the enemy's state as the rules read it (0 for a
-                                ;   cannon's bullet bill, rule C)
+                                ;   cannon's bullet bill)
 enemy_mirror_control: .res 1    ; draw_enemy: the mirror control of the rows (bit 1: mirrored)
 enemy_pose:     .res 1          ; draw_enemy: the pose, an offset in enemy_pose_tiles
 player_row_bits: .res 1         ; draw_player_frame: the row bits still to test
 animation_steps: .res 1         ; animate_player: the steps of the animation
 big_lift_columns: .res 1        ; draw_big_lift: the column bits still to test
 vine_draw_part: .res 1          ; draw_vine_stack: the part, 0 or 1
-brick_screen_origin: .res 1     ; draw_brick_pieces: the block's start on the screen (O, s16)
+brick_screen_origin: .res 1     ; draw_brick_pieces: the block's start on the screen (O)
 brick_draw_palette: .res 1      ; draw_brick_pieces: the pieces' palette
 .segment "GAMEPLAY"
 
 ; draw_code_rules: the rules of draw_enemy that hold for a set of drawing
-; codes (11 section 7), one byte for each code; draw_enemy reads it with
+; codes, one byte for each code; draw_enemy reads it with
 ; long addressing (the table is in the code's bank).
-DRAW_RULE_FIXED_POSE = $01      ; rule N: no 2-step animation (codes $06, $08, $0C, $18-$1A)
-DRAW_RULE_OUTER_ROWS = $02      ; rule S: upside down, rows 1 and 3 change places (codes $05, $11,
+DRAW_RULE_FIXED_POSE = $01      ; no 2-step animation (codes $06, $08, $0C, $18-$1A)
+DRAW_RULE_OUTER_ROWS = $02      ; upside down, rows 1 and 3 change places (codes $05, $11,
                                 ;   $15-$1A); the other codes swap rows 2 and 3
-DRAW_RULE_MIRRORED = $04        ; rule T: the halves are always mirrored (codes $07, $0C, $0D)
+DRAW_RULE_MIRRORED = $04        ; the halves are always mirrored (codes $07, $0C, $0D)
 draw_code_rules:
         .byte 0                                         ; $00 koopa
         .byte 0                                         ; $01 koopa
@@ -257,7 +192,7 @@ draw_code_rules:
 
 
 ; ===========================================================================
-; The screen places (11 section 4)
+; The screen places
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -302,6 +237,16 @@ misc_screen_position:
 .i8
         ldx #REL_MISC
 ; screen_position: the shared part, for the group in X8.
+; Original drawing routines:
+;   $F12A-$F17F  the screen positions: the entries and screen_position
+;   $F180-$F1D6  the offscreen entries and store_offscreen_bits
+;   $F1F6-$F281  find_x_offscreen, find_y_offscreen; scale_position_diff and
+;                the mask and margin tables become offscreen_step and the
+;                edge tables of the build
+;   $F282-$F2C9  draw_sprite_pair; draw_tile_pair ($EBB2) and
+;                draw_enemy_tile_pair ($EBAA) are the tile loads of its callers
+;   $E5B3-$E5C7  set_six_sprite_y and its entries; place_six_sprites ($E4AE)
+;                and hide_left_column ($EC4A) are the stores of their callers
 screen_position:
 .a8
 .i8
@@ -344,7 +289,7 @@ block_screen_position:
 
 
 ; ===========================================================================
-; The offscreen bits (11 section 5)
+; The offscreen bits
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -419,7 +364,7 @@ store_offscreen_bits:
 ; ---------------------------------------------------------------------------
 ; find_x_offscreen: the 8-pixel columns of the object in D that count as
 ; off the screen: bit 7 the column at X to X + 7, down to bit 0 the column
-; at X + 56 to X + 63 (11 section 5).
+; at X + 56 to X + 63.
 ;
 ; The right edge first: dR = screen_right - X, a 16-bit difference (its
 ; sign is the sign of the original's page byte). Below 0 (the object right
@@ -480,7 +425,7 @@ find_x_offscreen:
 ; ---------------------------------------------------------------------------
 ; find_y_offscreen: the 8-pixel rows of the object in D that count as off
 ; the screen: bit 3 the row at Y to Y + 7, down to bit 0 the row at Y + 24
-; to Y + 31 (11 section 5). On the screen the Y word is $0100-$01FF (Y high
+; to Y + 31. On the screen the Y word is $0100-$01FF (Y high
 ; 1, offscreen_top_edge and offscreen_bottom_edge from the build).
 ;
 ; The top first: dT = the top edge - the Y word. Below 0 (lower than the
@@ -566,14 +511,14 @@ offscreen_step:
 
 
 ; ===========================================================================
-; Rows of two sprites, and one byte of several sprites (11 section 6)
+; Rows of two sprites, and one byte of several sprites
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; set_row_mirror: the mirror of the rows that draw_sprite_pair draws next.
 ; A mirror control with bit 1 set mirrors them (a direction of FACING_LEFT,
 ; or any value with that bit, as the original tests it: Bowser's start
-; direction $DF, 05b L5). A mirrored row shows its tiles changed over and
+; direction $DF). A mirrored row shows its tiles changed over and
 ; both sprites flipped left to right.
 ;
 ; In:       A8 = the mirror control; sprite_row_attr_x
@@ -691,21 +636,20 @@ set_two_sprite_y:
 
 
 ; ===========================================================================
-; Enemies (11 sections 7 and 8)
+; Enemies
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; draw_enemy: an enemy in the six sprites of its slot: three rows of two
 ; from its pose, then its flips and the mirror of its halves, then the
-; parts off the screen hidden; an enemy below the screen is erased (11
-; section 7, rules A-W, in the original's order). The ordinary enemies,
+; parts off the screen hidden; an enemy below the screen is erased. The ordinary enemies,
 ; the bullet bills, the jump spring, the princess and the retainer, and
-; each half of Bowser (05b draw_bowser_half sets bowser_draw) draw here.
+; each half of Bowser (draw_bowser_half sets bowser_draw) draw here.
 ;
 ; The rules that hold for a set of drawing codes are draw_code_rules; the
 ; rules of one kind test its kind. The poses that the rules pick are the
 ; build's bytes, read from the original's operands. The rows that the rules
-; read back (rules S and T) are the ones that its rows wrote, as in the
+; read back for flipping and mirroring are the ones that its rows wrote, as in the
 ; original.
 ;
 ; In:       D = the enemy's record; rel_x + REL_ENEMY (enemy_screen_position),
@@ -721,10 +665,16 @@ set_two_sprite_y:
 ;           defeated_flip_check $EA37, draw_enemy_rows $EA4B,
 ;           draw_enemy_tile_pair $EBAA)
 ; ---------------------------------------------------------------------------
+; Original drawing routines:
+;   $E87D-$EBCC  draw_enemy with its steps (draw_flipped_bowser $E946,
+;                pick_hammer_bro_frame $E9CA, freeze_anim_check $EA29,
+;                defeated_flip_check $EA37, draw_enemy_rows $EA4B) and
+;                hide_enemy_offscreen ($EB64, with hide_enemy_row $EBB7 and
+;                hide_enemy_column $EBC1)
 draw_enemy:
 .a8
 .i8
-; A. The start: row 1 at the enemy's Y, the left column at its screen X,
+; The start: row 1 at the enemy's Y, the left column at its screen X,
 ; the slot's own sprites, its direction and attributes; not upside down.
         ldx Object::slot
         lda sprite_offset+SPR_ENEMY-SLOT_ENEMY,x
@@ -738,7 +688,7 @@ draw_enemy:
         lda Object::direction
         sta enemy_mirror_control
         stz vertical_flip
-; B. A piranha plant that waits in its pipe (its speed's bit 7 clear, its
+; A piranha plant that waits in its pipe (its speed's bit 7 clear, its
 ; frame timer running) draws nothing: its sprites stay hidden.
         lda Object::kind
         cmp #KIND_PIRANHA
@@ -748,7 +698,7 @@ draw_enemy:
         lda timers+TIMER_ENEMY_FRAME-SLOT_ENEMY,x
         beq @code
         rts
-; C. The drawing code is the kind, and the draw state the state's low 5
+; The drawing code is the kind, and the draw state the state's low 5
 ; bits, but for the retainer or princess (code $15, not mirrored), a
 ; cannon's bullet bill (one line higher, its own palette, behind the
 ; background while it leaves the cannon, drawn as a wave's bullet bill) and
@@ -785,7 +735,7 @@ draw_enemy:
         sty enemy_draw_state
         ldy spring_anim
         lda spring_draw_codes,y
-; D. A podoboo shows upside down while it falls or stays.
+; A podoboo shows upside down while it falls or stays.
 @podoboo:
         sta enemy_draw_code
         cmp #KIND_PODOBOO
@@ -793,7 +743,7 @@ draw_enemy:
         lda Object::y_speed_whole
         bmi @bowser
         inc vertical_flip               ; UPSIDE_DOWN
-; E. Each half of Bowser has its code.
+; Each half of Bowser has its code.
 @bowser:
         lda bowser_draw
         beq @goomba
@@ -803,8 +753,8 @@ draw_enemy:
         ldy #DRAW_CODE_BOWSER_REAR
 @half:
         sty enemy_draw_code
-; F. A goomba knocked or stomped (any state from 2 on, its whole byte) has
-; draw state 4; a goomba that walks mirrors itself each 8 frames (FC bit
+; A goomba knocked or stomped (any state from 2 on, its whole byte) has
+; draw state 4; a goomba that walks mirrors itself each 8 frames (frame_count bit
 ; 3 clear), unless defeated or frozen.
 @goomba:
         lda enemy_draw_code
@@ -825,7 +775,7 @@ draw_enemy:
         lda enemy_mirror_control
         eor #FACING_RIGHT | FACING_LEFT
         sta enemy_mirror_control
-; G. The code's attribute bits and first pose.
+; The code's attribute bits and first pose.
 @code_values:
         ldy enemy_draw_code
         lda enemy_code_attributes,y
@@ -833,7 +783,7 @@ draw_enemy:
         sta sprite_row_attr_x
         lda enemy_first_pose,y
         sta enemy_pose
-; H. Bowser's halves: the second front pose while the mouth is open, the
+; Bowser's halves: the second front pose while the mouth is open, the
 ; second rear pose on the feet's second step; defeated, each half upside
 ; down, the rear one 16 lines higher. vertical_flip takes the pose, which
 ; is never 0. Then the rows.
@@ -869,7 +819,7 @@ draw_enemy:
         sta vertical_flip
 @bowser_rows:
         jmp @rows
-; I. The spiny's egg (draw state 5): the egg pose, mirrored. Then rule L.
+; The spiny's egg (draw state 5): the egg pose, mirrored. Then the hammer-brother pose is checked.
 @spiny:
         lda enemy_pose
         cmp enemy_pose_spiny
@@ -883,8 +833,8 @@ draw_enemy:
         sta enemy_mirror_control
 @to_hammer_bro:
         bra @hammer_bro
-; J. Lakitu's second pose while frenzy_timer is low (not when defeated).
-; Then rule P.
+; Lakitu's second pose while frenzy_timer is low (not when defeated).
+; A defeated enemy can also be turned upside down.
 @lakitu_pose:
         cmp enemy_pose_lakitu
         bne @shells
@@ -898,7 +848,7 @@ draw_enemy:
         sta enemy_pose
 @to_defeated:
         jmp @defeated
-; K. The shells: a koopa or buzzy beetle from draw state 2 on shows shell
+; The shells: a koopa or buzzy beetle from draw state 2 on shows shell
 ; A (the buzzy's 1 line lower); in draw state 4 every code shows shell B,
 ; 1 more line lower for the buzzy (2 in all) and 2 for the others; a goomba
 ; there shows the goomba pose 2 lines lower, or the flat goomba 1 line
@@ -939,7 +889,7 @@ draw_enemy:
         lda enemy_pose_flat_goomba
         sta enemy_pose
         dec sprite_row_y
-; L. The hammer brother: state 0, the 2-step rule; the throw bit, the
+; The hammer brother: state 0, the 2-step rule; the throw bit, the
 ; third pose and the 2-step rule; else its first pose.
 @hammer_bro:
         lda enemy_draw_code
@@ -952,7 +902,7 @@ draw_enemy:
         lda enemy_pose_hammer_bro_3
         sta enemy_pose
         bra @step_rule
-; M. A cheep-cheep takes the 2-step rule. The others keep their first pose
+; A cheep-cheep takes the 2-step rule. The others keep their first pose
 ; while their interval timer is 5 or more; the blooper takes its second
 ; pose by its interval timer (0, 2, 3 or 4), 3 lines lower, without the
 ; frame test.
@@ -974,9 +924,9 @@ draw_enemy:
         adc #BLOOPER_DROP
         sta sprite_row_y
         bra @second_pose
-; N. The 2-step rule: none for the codes of fixed poses; the princess in
+; The 2-step rule: none for the codes of fixed poses; the princess in
 ; world 8, else the retainer (mirrored); for the others the second pose
-; while FC bit 3 is clear (enemy_step_mask: 8 frames each pose, in phase
+; while frame_count bit 3 is clear (enemy_step_mask: 8 frames each pose, in phase
 ; for all enemies).
 @step_rule:
         ldx enemy_draw_code
@@ -997,7 +947,7 @@ draw_enemy:
         lda frame_count
         and enemy_step_mask
         bne @defeated
-; O. The second pose, unless the enemy is a kicked shell or defeated, or
+; The second pose, unless the enemy is a kicked shell or defeated, or
 ; the game is frozen.
 @second_pose:
         lda enemy_draw_status
@@ -1008,7 +958,7 @@ draw_enemy:
         clc
         adc #ENEMY_POSE_TILES
         sta enemy_pose
-; P. A defeated enemy from code 4 on is upside down, with draw state 0.
+; A defeated enemy from code 4 on is upside down, with draw state 0.
 @defeated:
         lda enemy_draw_status
         and #ENEMY_DEFEATED
@@ -1019,10 +969,10 @@ draw_enemy:
         lda #UPSIDE_DOWN
         sta vertical_flip
         stz enemy_draw_state
-; Q. Three rows from the pose: Y0, Y0 + 8, Y0 + 16. The pose at $FC (jump
+; Three rows from the pose: Y0, Y0 + 8, Y0 + 16. The pose at $FC (jump
 ; spring 3) reads its third row from the table's bytes 256 and 257, its own
 ; (the original's 8-bit index wraps to bytes 0 and 1, which hold the same
-; tiles: leftover 2).
+; tiles).
 @rows:
         lda enemy_mirror_control
         jsr set_row_mirror
@@ -1040,15 +990,14 @@ draw_enemy:
         lda enemy_pose_tiles+2*POSE_ROW_BYTES,x
         jsr draw_sprite_pair
 .a8
-; R. A bullet bill shows no flip beyond its direction, also when defeated
-; (leftover 8).
+; A bullet bill shows no flip beyond its direction, also when defeated.
         ldy draw_first_sprite
         lda enemy_draw_code
         cmp #DRAW_CODE_BULLET
         bne @upside_down
 @to_hide:
-        jmp @hide                       ; (rule T's branches to W come here: W is out of their reach)
-; S. Upside down: all six attributes are s1's with the Y flip; the tiles of
+        jmp @hide                       ; hide the offscreen parts
+; Upside down: all six attributes are s1's with the Y flip; the tiles of
 ; rows 1 and 3 (three-row poses) or of rows 2 and 3 (two-row poses) change
 ; places; the Y bytes stay.
 @upside_down:
@@ -1088,7 +1037,7 @@ draw_enemy:
         sta sprite_list+SPRITE_ENTRY+SPRITE_TILE,x
         xba
         sta sprite_list+5*SPRITE_ENTRY+SPRITE_TILE,y
-; T. The mirror of the halves: none for Bowser and the hammer brother
+; The mirror of the halves: none for Bowser and the hammer brother
 ; (their direction only); always for the blooper, the podoboo and the
 ; piranha plant; for the spiny in its egg; for the others from draw state
 ; 2 on. The princess's code first sets s6's attributes (the retainer's are
@@ -1143,7 +1092,7 @@ draw_enemy:
         ora #ATTR_FLIP_X
         sta sprite_list+3*SPRITE_ENTRY+SPRITE_ATTR,y
         sta sprite_list+5*SPRITE_ENTRY+SPRITE_ATTR,y
-; U. Lakitu's cloud row (row 3, row 1 upside down) mirrored; in his second
+; Lakitu's cloud row (row 3, row 1 upside down) mirrored; in his second
 ; pose (frenzy_timer low) row 2 as the cloud row's right half.
 @lakitu:
         lda enemy_draw_code
@@ -1172,7 +1121,7 @@ draw_enemy:
         ora lakitu_cloud_bits
         sta sprite_list+SPRITE_ENTRY+SPRITE_ATTR,y
         bra @hide
-; V. The jump spring: rows 2 and 3 upside down in their own palette, the
+; The jump spring: rows 2 and 3 upside down in their own palette, the
 ; right column mirrored.
 @spring_rows:
         cmp #DRAW_CODE_FIRST_SPRING
@@ -1183,7 +1132,7 @@ draw_enemy:
         ora #ATTR_FLIP_X
         sta sprite_list+3*SPRITE_ENTRY+SPRITE_ATTR,y
         sta sprite_list+5*SPRITE_ENTRY+SPRITE_ATTR,y
-; W. The parts off the screen: the fall-through into hide_enemy_offscreen.
+; The parts off the screen: the fall-through into hide_enemy_offscreen.
 @hide:
 
 ; ---------------------------------------------------------------------------
@@ -1254,14 +1203,14 @@ hide_enemy_offscreen:
 
 
 ; ===========================================================================
-; The player (11 sections 9 and 10)
+; The player
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; draw_player: the player in sprites 1-8, four rows of two (sprite_offset's
 ; player entry, which the shuffle never moves). In the injury blink nothing
 ; is drawn on odd frames, and player_screen_x keeps the value of the last
-; drawn frame for the scroll of the next frame (leftover 5). The pose: the
+; drawn frame for the scroll of the next frame. The pose: the
 ; killed pose in the death task, the step of the size change while the
 ; player grows or shrinks, else the pose of his action; a swimmer off the
 ; ground then kicks.
@@ -1277,6 +1226,11 @@ hide_enemy_offscreen:
 ;           20 on a frame that the blink skips
 ; Original: $EEE9-$EF44 (draw_player, pick_player_frame $EF34)
 ; ---------------------------------------------------------------------------
+; Original drawing routines:
+;   $EEE9-$F129  draw_player and its routines (the size offset $F091 is
+;                size_action, offset_for_this_frame $F062 and
+;                offset_from_anim_step $F0D0 are pose_of_step and
+;                pose_at_step, fixed_frame_actions $F028 is fixed_pose)
 draw_player:
 .a8
 .i8
@@ -1298,10 +1252,10 @@ draw_player:
         beq @action                     ; PLAYER_ON_GROUND: no kick
         jsr choose_player_action
         jsr draw_player_frame
-; Rule 6: the swim kick, 4 frames of each 8 (FC bit 2 clear): the left tile
+; Rule 6: the swim kick, 4 frames of each 8 (frame_count bit 2 clear): the left tile
 ; of row 4 (s7 facing right; s8 facing left, where the row is mirrored)
 ; becomes the kick's foot; the small player's third swim pose keeps its
-; own foot (its tile compared with the table's byte, leftover 6).
+; own foot (its tile compared with the table's byte).
         lda frame_count
         and #SWIM_KICK_FRAMES
         bne @done
@@ -1340,7 +1294,7 @@ draw_player:
 ; ---------------------------------------------------------------------------
 ; draw_player_frame: the player's pose drawn: four rows, the rows of
 ; check_player_attribs, the fire throw pose, then the rows off the screen
-; hidden (only rows: the scroll keeps the player on the screen, 04).
+; hidden (only rows: the scroll keeps the player on the screen).
 ;
 ; The throw pose shows while the animation timer is below throw_timer:
 ; then throw_timer takes the timer's value and the big throw pose is drawn
@@ -1400,8 +1354,8 @@ draw_player_frame:
         rts
 
 ; ---------------------------------------------------------------------------
-; choose_player_action: the pose of the player's action, by his state
-; (11 section 9). Climbing: the climb, still while his Y speed is 0, else 2
+; choose_player_action: the pose of the player's action, by his state.
+; Climbing: the climb, still while his Y speed is 0, else 2
 ; steps. Falling: the walk pose of the current step, which does not move.
 ; Jumping: the crouch or the jump, fixed; swimming: the strokes of 3 steps
 ; while the stroke timer or the step is not 0 or A is held, else the first
@@ -1549,7 +1503,7 @@ pose_at_step:
 
 ; ---------------------------------------------------------------------------
 ; animate_player: the pose of the current step; when the animation timer
-; has run out, it takes player_anim_rate again (04 sets the rate) and the
+; has run out, it takes player_anim_rate again (player code sets the rate) and the
 ; step moves on, back to 0 after the last. The step that moves shows from
 ; the next frame.
 ;
@@ -1584,8 +1538,8 @@ animate_player:
 
 ; ---------------------------------------------------------------------------
 ; apply_size_change_frame: the pose of the size change: the step moves on
-; each 4 frames (FC and 3 = 0); after the 10th step it is 0 and the change
-; ends (player_resizing = 0: the task of 04 waits for it). Growing: small
+; each 4 frames (frame_count and 3 = 0); after the 10th step it is 0 and the change
+; ends (player_resizing = 0: the player task waits for it). Growing: small
 ; standing, the grow pose or big standing, by size_change_poses; shrinking:
 ; small swim 1 where the shrinking steps are not 0, else big swim 1. The
 ; frame that ends the change draws step 0.
@@ -1631,9 +1585,9 @@ apply_size_change_frame:
 ; drawn as the tile and its mirror whatever the facing: in the death task
 ; and in big standing rows 3 and 4; in the crouch, small standing and the
 ; grow pose row 4. The left sprite loses both flips, the right one gets the
-; X flip; the behind bit and the palette stay. (Document 11 gives big
-; standing row 4 only; the original's test of that pose falls into the
-; death task's row 3, and its rows 3 and 4 are both one tile.)
+; X flip; the behind bit and the palette stay.
+; In the original, the big-standing pose test falls through to the death
+; task's row 3. Both rows 3 and 4 contain one tile.
 ;
 ; In:       player_task, player_frame; the player's sprites
 ; Out:      s5-s8's attributes
@@ -1680,9 +1634,9 @@ check_player_attribs:
 ; ---------------------------------------------------------------------------
 ; draw_player_rows: the player's rows from his pose: row 1 at his screen
 ; Y, the left column at his screen X, mirrored when he faces left, every
-; sprite with his attributes (04 and the star colours set them). It writes
+; sprite with his attributes (the player task and the star colours set them). It writes
 ; player_screen_x, which the scroll of the next frame reads: its only
-; writer (leftover 5). draw_player_row: the rows from the pose offset in X
+; writer. draw_player_row: the rows from the pose offset in X
 ; at the sprite in Y, as the lives screen enters it.
 ;
 ; In:       A8 = the rows (3 or 4); D = the player's record; player_frame,
@@ -1726,10 +1680,10 @@ draw_player_row:
 ; ---------------------------------------------------------------------------
 ; draw_lives_screen_player: the small player standing on the lives screen,
 ; in sprites 1-8, from the original's table of his place, mirror control,
-; attributes and rows (11 section 10); then sprite 8 as the mirror of its
+; attributes and rows; then sprite 8 as the mirror of its
 ; left neighbour. The original takes sprite 8's attributes from sprite 9's,
 ; which the area setup clears before every lives screen and nothing writes
-; in between (leftover 3): the mirror bit alone.
+; in between: the mirror bit alone.
 ;
 ; In:       D any
 ; Out:      sprites 1-8
@@ -1737,6 +1691,15 @@ draw_player_row:
 ; Time:     550 cycles with the call, once for each lives screen
 ; Original: $EFA4-$EFBD (draw_lives_screen_player), $EF9E (its table)
 ; ---------------------------------------------------------------------------
+; Original drawing routines:
+;   $EFA4 draw_lives_screen_player, $E5C8 draw_big_lift, $ED66
+;   draw_small_lift_sprites, $E435 draw_vine_stack, $E54B draw_flag_sprites,
+;   $E6D2 draw_item_sprite, $E4DC draw_spinning_hammer, $E686
+;   draw_spinning_coin (with its score part $E655), $EBD1 draw_bumped_block,
+;   $EC53 draw_brick_pieces (with check_left_edge_bit $EC46), $ECDE
+;   draw_player_fireball, $ECED draw_fire_piece_sprite, $ED09
+;   draw_fireball_burst, $ED17 draw_firework_burst, $EDE1 draw_air_bubble
+;
 draw_lives_screen_player:
 .a8
 .i8
@@ -1759,7 +1722,7 @@ draw_lives_screen_player:
 
 
 ; ===========================================================================
-; Lifts, the vine, the flag, the power-up (11 sections 11-14)
+; Lifts, the vine, the flag, the power-up
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -1930,7 +1893,7 @@ draw_small_lift_sprites:
 ; tile on part 0's first sprite. A sprite shows only from the vine's start
 ; Y up to 99 lines above it: (vine_start_y - its Y) mod 256 below $64.
 ; The vine's offscreen bits are not used here (run_vine erases the vine
-; after the draw, 05a).
+; after the draw).
 ;
 ; In:       Y8 = the part, 0 or 1; vine_slots[part] = the enemy (0-5) of
 ;           its sprites; rel_x, rel_y of REL_ENEMY (slot 5, the vine);
@@ -2017,8 +1980,8 @@ draw_vine_stack:
 ; Any of the flag's three columns off the screen hides s1-s6.
 ;
 ; The score number's X is the flag's X + 8, then + 12, in 8 bits; the
-; original adds s3's row to the flag's Y with the carry of that second add
-; (leftover 1): at screen X 236-247 the lowest flag sprite is one line
+; original adds s3's row to the flag's Y with the carry of that second add:
+; at screen X 236-247 the lowest flag sprite is one line
 ; lower. The add follows that sum here, so the carry is the same. One
 ; operand of the original gives the flag's attributes and the score
 ; number's attributes and mirror control (not mirrored; the build checks
@@ -2049,7 +2012,7 @@ draw_flag_sprites:
         lda Object::y_pos
         sta sprite_list+SPRITE_Y,y
         sta sprite_list+SPRITE_ENTRY+SPRITE_Y,y
-        adc #SPRITE_PIXELS              ; + the carry of the score number's X (leftover 1)
+        adc #SPRITE_PIXELS              ; + the carry of the score number's X
         sta sprite_list+2*SPRITE_ENTRY+SPRITE_Y,y
         lda flag_attr
         sta sprite_list+SPRITE_ATTR,y
@@ -2090,7 +2053,7 @@ draw_flag_sprites:
 ; draw_item_sprite: the power-up in enemy slot 5: two rows, 8 and 16 lines
 ; under its Y, not mirrored, with the kind's palette and the slot's behind
 ; bit (it rises from the block). The fire flower and the star change their
-; palette each 2 frames ((FC shr 1) and 3; the flower's stem keeps its
+; palette each 2 frames ((frame_count shr 1) and 3; the flower's stem keeps its
 ; palette), and their right column is mirrored. Then the parts off the
 ; screen, as an enemy's (the rows of the bits are 8 lines above the rows of
 ; the sprites); a power-up below the screen is erased.
@@ -2158,14 +2121,14 @@ draw_item_sprite:
 
 
 ; ===========================================================================
-; Misc objects (11 section 15)
+; Misc objects
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; draw_spinning_hammer: a hammer, two sprites placed by its spin step: the
 ; first from the hammer's screen place, the second from the first. The
 ; step is 0 while the game is frozen or the hammer is in the thrower's
-; hand; in flight it moves on each 4 frames ((FC shr 2) and 3). Any of its
+; hand; in flight it moves on each 4 frames ((frame_count shr 2) and 3). Any of its
 ; rows, or column 1 or 2, off the screen ends the hammer (state 0) and
 ; hides it.
 ;
@@ -2227,9 +2190,9 @@ draw_spinning_hammer:
 ; ---------------------------------------------------------------------------
 ; draw_spinning_coin: a coin from a block (misc state 1), two sprites: the
 ; upper one at the coin's Y, the lower one a row under it, upside down; the
-; tile changes each 2 frames ((FC shr 1) and 3). From misc state 2 on, its
+; tile changes each 2 frames ((frame_count shr 1) and 3). From misc state 2 on, its
 ; "200": the number rises 1 line each 2 frames (the misc object's Y - 1 on
-; frames with FC bit 0 clear, the low byte only, as the original), two
+; frames with frame_count bit 0 clear, the low byte only, as the original), two
 ; sprites side by side. There is no offscreen test.
 ;
 ; In:       D = the misc object's record; rel_x of REL_MISC
@@ -2291,7 +2254,7 @@ draw_spinning_coin:
 
 
 ; ===========================================================================
-; Block objects (11 section 16)
+; Block objects
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -2380,16 +2343,16 @@ draw_bumped_block:
 ; pair (the upper piece's place), s3, s4 the lower pair (the lower piece's
 ; place); each pair is a left piece and a right piece mirrored about the
 ; block's start. One tile and palette (another during the walk to the
-; castle); the pieces spin each 4 frames (FC bit 2 the X flip, bit 3 the Y
+; castle); the pieces spin each 4 frames (frame_count bit 2 the X flip, bit 3 the Y
 ; flip).
 ;
 ; The right piece's X, from O = (the block's start X - the screen's left
 ; pixel) mod 256 and the left piece's X L, in 8 bits with the original's
-; two carries (leftover 4): c2 = 1 when O >= L; t = (O - L) + O + c2; c3 =
+; two carries: c2 = 1 when O >= L; t = (O - L) + O + c2; c3 =
 ; the carry of t; R = t + 6 + c3. Column 1 of the upper piece off the
 ; screen hides s1, s3; its row 1 off hides s1, s2; a block in the right half
 ; of the screen whose right piece wrapped to the left (s1's X not below
-; s2's) hides s2, s4. The lower piece has no row test (07 keeps its Y at
+; s2's) hides s2, s4. The lower piece has no row test (collision code keeps its Y at
 ; $F0 or less).
 ;
 ; In:       D = the block object's record (the upper piece); rel_x, rel_y of
@@ -2423,7 +2386,7 @@ draw_brick_pieces:
         asl
         asl
         asl
-        asl                             ; BRICK_SPIN_SHIFT: FC bits 2, 3 to the flips
+        asl                             ; BRICK_SPIN_SHIFT: frame_count bits 2, 3 to the flips
         and #ATTR_FLIP_X | ATTR_FLIP_Y
         ora brick_draw_palette
         iny                             ; SPRITE_ATTR
@@ -2480,13 +2443,13 @@ draw_brick_pieces:
 
 
 ; ===========================================================================
-; Fireballs, fire bar pieces, bursts, air bubbles (11 sections 17 and 18)
+; Fireballs, fire bar pieces, bursts, air bubbles
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
 ; draw_player_fireball: a fireball of the player, its own sprite at its
 ; screen place, then its tile and attributes (draw_fire_piece_sprite, by
-; the fall-through). Its routine (05a) draws it only while its offscreen
+; the fall-through). Its routine draws it only while its offscreen
 ; bits and $CC are 0.
 ;
 ; In:       D = the fireball's record; rel_x, rel_y of REL_FIREBALL
@@ -2508,8 +2471,8 @@ draw_player_fireball:
 
 ; ---------------------------------------------------------------------------
 ; draw_fire_piece_sprite: the tile and attributes of a fireball or of a
-; fire bar's ball: the second tile while FC bit 2 is set (each 4 frames),
-; flipped both ways while FC bit 3 is set (each 8 frames).
+; fire bar's ball: the second tile while frame_count bit 2 is set (each 4 frames),
+; flipped both ways while frame_count bit 3 is set (each 8 frames).
 ;
 ; In:       Y8 = the sprite's offset in sprite_list; D any
 ; Out:      the sprite's tile and attributes
@@ -2568,7 +2531,7 @@ draw_fireball_burst:
 ; four mirror images, a 16 by 16 burst centred on the middle of the
 ; fireball's 8 by 8 place; no offscreen test (near the left edge X - 4
 ; wraps to the right edge, as in the original). The castle's fireworks
-; (05b) first copy their place into the fireball group's bytes.
+; first copy their place into the fireball group's bytes.
 ;
 ; In:       A8 = the step, 0-2; Y8 = the first sprite's offset; rel_x,
 ;           rel_y of REL_FIREBALL; D any

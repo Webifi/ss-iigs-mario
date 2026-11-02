@@ -1,104 +1,31 @@
-"""The areas of the game, made at build time: the column builder of the
-original (document 06) run over every area list, and the enemy lists turned
-into the port's spawn records.
+"""Build area columns and enemy spawn records from the game program ROM.
 
-The area lists do not change during play, so the columns that the
-original's builder makes from them are known before the game runs. A
-column depends only on the area list, the page where the area started and
-the loop rewinds since then (06 sections 7 and 15), in the water areas of
-world 8 on the world (06 section 6), and in a column with a hidden 1-up
-block on the player's hidden 1-up flag (such a column has a second form,
-with the block). This builder runs the builder's
-rules (06 sections 3-9) for every area: from page 0, from every other start
-page (begin_area takes any page 0-31), and after every loop rewind of the
-castle mazes. For each column build of the original (steps 7 and 3 of a
-set, 06 section 11) it writes a record: the column's 13 metatiles and the
-13 bytes that the column puts into the collision buffer, and the column's
-events: the work of that build that depends on the game at run time (an
-enemy start, a cannon record, the scroll lock...), in the original's order.
-src/game/area.s reads one record at each build step of the original and
-does only that run-time work. Every record of a stream is followed by the
-next column's; a stream that comes to the state of the stream from page 0
-at the same column ends with a jump there.
+scripts/assets.py passes build() the program and a host-data writer. Area
+layouts are fixed, so this module runs the column builder before play. It
+builds variants for entry pages, castle-loop rewinds, world 8 water areas
+and the hidden 1-up block. Each column has 13 background blocks, collision
+bytes and events that still depend on live play.
 
-ROM tables read (the address, its size, the document section):
-- world_area_starts $9CB4 (8), area_slots $9CBC (36): the area byte of each
-  slot of each world (06 section 1).
-- enemy_list_bases $9CE0 (4), enemy_list_low $9CE4 (34), enemy_list_high
-  $9D06 (34), area_list_bases $9D28 (4), area_list_low $9D2C (34),
-  area_list_high $9D4E (34): the address of each list by type and number
-  (06 section 2).
-- The area lists: a 2-byte header, 2-byte objects, the end byte $FD (06
-  section 3). The enemy lists: 2-byte entries (3 for an area change), the
-  end byte $FF (06 section 12).
-- back_scenery_starts $92F7 (3), back_scenery_rows $92FA (144),
-  back_scenery_pieces $938A (36), fore_scenery_starts $93AE (3),
-  fore_scenery_rows $93B1 (39), floor_tiles_by_type $93D8 (4),
-  terrain_patterns $93DC (32), single_bit_masks $C68A (8),
-  storable_bound_by_palette $9504 (4) (06 sections 6, 8, 9).
-- The object tables (06 section 4): pulley_tiles $97B7 (3),
-  end_castle_pieces $97CF (55), side_pipe_shaft_codes $989F (4),
-  side_pipe_top_tiles $98A3 (4), side_pipe_bottom_tiles $98A7 (4),
-  pipe_top_tiles $98DD (8), coin_metatile_by_type $99EE (4),
-  castle_prop_rows $99FB (3), castle_prop_metatiles $99FE (3),
-  solid_metatile_by_type $9A25 (4), brick_metatile_by_type $9A29 (5),
-  stair_heights $9AA5 (9), stair_top_rows $9AAE (9), pit_top_metatile
-  $9B3D (4), bumpable_metatiles $BDE8 (14), wave_kinds $9728 (3).
-- The metatiles that the object routines load as immediates, each at the
-  address of its operand (the *_AT constants): no metatile number of the
-  game is typed here.
-- loop_worlds $C06B (11), loop_pages $C076 (11), loop_rewind_offsets
-  $9BF8 (11): the loop checks and where they send the list back (06
-  section 15).
-- halfway_pages $91BD (16): the start page after a lost life (03 4.11).
-- The operand of read_enemy_spawns' kind test of enemy slot 5 ($C160, the
-  power-up's kind): no page skip may have that page (05a section 20.2).
-
-The forms written. src/game/area.s reads them and defines their structs
-(ColumnRecord, ColumnEvent, AreaRecord, RewindEntry, SpawnRecord) and the
-values that this file names (COLUMN_HAS_EVENTS, SPAWN_END, SPAWN_SKIP,
-SPAWN_LINK):
-- area_columns (a data bank): every distinct column once, 26 bytes: the 13
-  metatiles, row 0 first, then the 13 bytes of its collision buffer column
-  (the metatile, or 0 below storable_bound_by_palette of its palette).
-- area_programs (a data bank): the ColumnRecords. A record: its column
-  (word: the offset in area_columns; COLUMN_HAS_EVENTS when events follow),
-  then with events their count (byte) and the events, 5 bytes each: the
-  run-time routine (word: a label of src/game/area.s), a position (word: a
-  world X, page x 256 + pixel, or an offset), a value (byte). The record
-  of a start page that has no object: one event that never ends.
-- area_records (a data bank): area_by_byte, a word for each area byte AND
-  $7F: the offset of its AreaRecord (0: no list has that area byte). An
-  AreaRecord: the header values (entrance, timer_setting, backdrop,
-  area_style, cloud_override as begin_area leaves them, 06 section 3), the
-  offset of its first record in spawn_records, the offset of its rewind table
-  (0: none), then for each start page 0-31 the offset of the first record
-  in area_programs. A rewind table: per entry the record that the builder
-  reads next at a loop check and the record to read after the rewind; it
-  holds every record that the builder can read next at a check of the
-  area (Area.add_rewinds), so the run-time search always ends in it.
-- spawn_records (a data bank): each enemy list as SpawnRecords of 8 bytes (05a
-  section 20, 06 section 12) in list order, with the pages resolved here
-  by the reader's rules (05a L33): kind (byte 1 AND $3F, or SPAWN_END,
-  SPAWN_SKIP: a page skip that the reader takes, where slot 5 stops as at
-  the original's, SPAWN_LINK), hard_only (1: only with hard mode 2),
-  x_pos (word: page x 256 + column x 16), y_pos (row x 16), and for a link
-  its area byte, its world and its entrance page.
-- world_area_starts, area_slots (a data bank): as the ROM has them.
-
-Python repeats no value that the assembly defines: the routines and those
-values are named by their labels, which the link resolves.
+src/game/area.s reads the records on the original eight-step schedule and
+performs events such as enemy starts and scroll locks. A stream that rejoins
+the page-zero path ends with a jump to the matching column. Assembly labels
+resolve the event routines and record flags at link time.
 """
 
 from iigs_payload import HostData
 
 PROGRAM_BASE = 0x8000  # the CPU address of the program's first byte
 
-# ---- The order of the worlds and the list pointers (06 sections 1, 2) ------------------
+# ---- The order of the worlds and the list pointers (2) ------------------
+# world_area_starts $9CB4 (8), area_slots $9CBC (36): the area byte of each
+#   slot of each world.
 WORLD_AREA_STARTS = 0x9CB4  # world_area_starts: the first slot of each world in area_slots
 AREA_SLOTS = 0x9CBC  # area_slots: one area byte per slot, in play order
 WORLDS = 8
 SLOTS = 36
+# enemy_list_bases $9CE0 (4), enemy_list_low $9CE4 (34), enemy_list_high
+#   $9D06 (34), area_list_bases $9D28 (4), area_list_low $9D2C (34),
+#   area_list_high $9D4E (34): the address of each list by type and number.
 ENEMY_LIST_BASES = 0x9CE0  # enemy_list_bases: the first enemy list of each area type
 ENEMY_LIST_LOW = 0x9CE4  # enemy_list_low/high: the address of each enemy list
 ENEMY_LIST_HIGH = 0x9D06
@@ -106,21 +33,24 @@ AREA_LIST_BASES = 0x9D28  # area_list_bases: the first area list of each area ty
 AREA_LIST_LOW = 0x9D2C  # area_list_low/high: the address of each area list
 AREA_LIST_HIGH = 0x9D4E
 AREA_TYPES = 4  # 0 water, 1 ground, 2 underground, 3 castle
-LISTS_OF_TYPE = (3, 22, 3, 6)  # the list numbers of each type (06 section 1)
+LISTS_OF_TYPE = (3, 22, 3, 6)  # the list numbers of each type
 TYPE_WATER, TYPE_GROUND, TYPE_UNDERGROUND, TYPE_CASTLE = range(AREA_TYPES)
 AREA_TYPE_SHIFT = 5  # the area byte: bits 6-5 the type, bits 4-0 the list number
 AREA_NUMBER_MASK = 0x1F
-AREA_BYTE_MASK = 0x7F  # bit 7 of an area byte is read by no reader (06 section 1)
+AREA_BYTE_MASK = 0x7F  # bit 7 of an area byte is read by no reader
 AREA_BYTES = 0x80
-WORLD_8 = 7  # the world whose water areas have the castle floor (06 section 6)
-HALFWAY_PAGES = 0x91BD  # 16: two levels a byte, the odd level in the high nybble (03 4.11)
-ENTRANCE_PIPE_INTROS = (6, 7)  # the header entrances of the pipe intro areas (04 player_enters_area)
-START_PAGES = 32  # begin_area's start page: an area change's entrance page has 5 bits (06 section 12)
+WORLD_8 = 7  # the world whose water areas have the castle floor
+# halfway_pages $91BD (16): the start page after a lost life.
+HALFWAY_PAGES = 0x91BD  # 16: two levels a byte, the odd level in the high nybble
+ENTRANCE_PIPE_INTROS = (6, 7)  # the header entrances of the pipe intro areas (player_enters_area)
+START_PAGES = 32  # begin_area's start page: an area change's entrance page has 5 bits
 START_SET_PAGES = 2  # the 24 columns of an area start end in page S + 1: play meets column 0 at S + 2
 
-# ---- The area list (06 section 3) --------------------------------------------------------
+# ---- The area list --------------------------------------------------------
 HEADER_BYTES = 2
 OBJECT_BYTES = 2
+# The area lists: a 2-byte header, 2-byte objects, the end byte $FD. The enemy lists: 2-byte entries (3 for an area change), the
+#   end byte $FF.
 AREA_LIST_END = 0xFD  # byte 0 of the end of an area list
 ROW_FIELD = 0x0F  # byte 0 bits 3-0: the row field
 COLUMN_SHIFT = 4  # byte 0 bits 7-4: the column in the page
@@ -137,7 +67,7 @@ ROW_13_SPECIAL = 0x40  # byte 1 bit 6 of a row 13 object: not a page skip
 ROW_13_KIND = 0x3F
 ROW_13_KIND_BITS = 0x7F  # byte 1 AND $7F of the loop command is LOOP_COMMAND
 PAGE_SKIP_PAGE = 0x1F  # byte 1 bits 4-0 of a page skip
-LOOP_COMMAND = 0x4B  # the loop command object (06 section 15)
+LOOP_COMMAND = 0x4B  # the loop command object
 SCENERY_COLOUR = 0x40  # byte 1 bit 6 of a row 14 object: the foreground or the backdrop
 SCENERY_TERRAIN = 0x0F
 SCENERY_BACKGROUND = 0x30
@@ -158,7 +88,7 @@ STYLE_CLOUD = 3  # the style value that sets the cloud flag (and style 0)
 CLOUD_FLAG = 3  # cloud_override when it is set
 STYLE_TREES, STYLE_MUSHROOMS, STYLE_CANNONS = range(3)
 
-# ---- The column (06 sections 5, 6, 9, 11) ------------------------------------------------
+# ---- Column layout and terrain ------------------------------------------------
 ROWS = 13  # metatile rows 0-12 of a column
 PAGE_COLUMNS = 16
 BACK_SCENERY_PAGES = 3  # the background repeats every three pages
@@ -174,7 +104,12 @@ TO_FLOOR = 0x0F  # a fill count that reaches row 12 from any row
 SIGN = 0x80
 BYTE = 0xFF
 
-# ---- The ROM tables of the builder (06 sections 4, 8, 9) ---------------------------------
+# ---- The ROM tables of the builder (8, 9) ---------------------------------
+# back_scenery_starts $92F7 (3), back_scenery_rows $92FA (144),
+#   back_scenery_pieces $938A (36), fore_scenery_starts $93AE (3),
+#   fore_scenery_rows $93B1 (39), floor_tiles_by_type $93D8 (4),
+#   terrain_patterns $93DC (32), single_bit_masks $C68A (8),
+#   storable_bound_by_palette $9504 (4).
 BACK_SCENERY_STARTS = 0x92F7
 BACK_SCENERY_ROWS = 0x92FA  # bits 7-4 the top row, bits 3-0 the piece (0 none)
 BACK_SCENERY_PIECES = 0x938A  # 12 pieces of 3 metatiles
@@ -189,6 +124,14 @@ TERRAIN_PATTERN_COUNT = 16
 SINGLE_BIT_MASKS = 0xC68A  # the bit of each row in a pattern byte
 STORABLE_BOUND_BY_PALETTE = 0x9504  # per palette: the lowest metatile that the collision buffer keeps
 PALETTES = 4
+# The object tables: pulley_tiles $97B7 (3),
+#   end_castle_pieces $97CF (55), side_pipe_shaft_codes $989F (4),
+#   side_pipe_top_tiles $98A3 (4), side_pipe_bottom_tiles $98A7 (4),
+#   pipe_top_tiles $98DD (8), coin_metatile_by_type $99EE (4),
+#   castle_prop_rows $99FB (3), castle_prop_metatiles $99FE (3),
+#   solid_metatile_by_type $9A25 (4), brick_metatile_by_type $9A29 (5),
+#   stair_heights $9AA5 (9), stair_top_rows $9AAE (9), pit_top_metatile
+#   $9B3D (4), bumpable_metatiles $BDE8 (14), wave_kinds $9728 (3).
 PULLEY_TILES = 0x97B7  # the left pulley, the rope, the right pulley
 END_CASTLE_PIECES = 0x97CF  # 11 rows of 5 metatiles, top first, the right column first
 CASTLE_COLUMNS = 5
@@ -219,6 +162,8 @@ ITEM_BRICK_OTHER = 5  # the bricks outside ground areas are 5 entries on
 WAVE_KINDS = 0x9728  # the enemy kind of the wave objects (row 13 kinds 8-10)
 WAVE_COUNT = 3
 WAVE_FIRST = 8
+# loop_worlds $C06B (11), loop_pages $C076 (11), loop_rewind_offsets
+#   $9BF8 (11): the loop checks and where they send the list back.
 LOOP_REWIND_OFFSETS = 0x9BF8  # the area list offset of each loop check's rewind
 LOOP_WORLDS = 0xC06B  # the world of each loop check
 LOOP_PAGES = 0xC076  # the parse page of each loop check
@@ -226,7 +171,10 @@ LOOP_CHECKS = 11
 LOOP_BACK_PAGES = 4  # send_player_back: the pages that the parser goes back
 
 # The metatiles that the object routines load as immediates: the address of
-# each operand (06 section 4; the routine in the comment).
+# each operand (the routine in the comment).
+# The metatiles that the object routines load as immediates, each at the
+#   address of its operand (the *_AT constants): no metatile number of the
+#   game is typed here.
 GREEN_LEDGE_LEFT_AT = 0x9763  # build_green_ledge: the left end
 GREEN_LEDGE_MIDDLE_AT = 0x976A  # the middle
 GREEN_LEDGE_TRUNK_AT = 0x976F  # the trunk under the middle
@@ -267,7 +215,7 @@ KEEP_FROM_AT = 0x9B92  # the metatiles from this one on are kept (after the test
 KEEP_GROUND_AT = 0x9B96  # the ground block is kept under a mushroom stem
 STEM_OVER_GROUND_AT = 0x9B9A  # the mushroom stem
 
-# The rows and counts of the object routines (06 section 4).
+# The rows and counts of the object routines.
 STEM_ROW = 1  # a mushroom ledge's stem top is one row under its cap
 CASTLE_DOOR_ROW = 10
 CASTLE_FIXED = 4  # build_end_castle: five columns
@@ -304,7 +252,7 @@ ROW_PIXELS = 16
 FIRST_ROW_Y = 32  # row 0 is under the status bar
 WORD = 0xFFFF
 
-# ---- The enemy lists (06 section 12, 05a section 20.1) -----------------------------------
+# ---- The enemy lists -----------------------------------
 ENEMY_LIST_END = 0xFF
 ENEMY_ROW_LINK = 14  # an area change: 3 bytes
 ENEMY_ROW_PAGE_SKIP = 15
@@ -327,6 +275,8 @@ COLUMN_OFFSET_LIMIT = 0x8000  # the column word keeps its top bit for COLUMN_HAS
 SPAWN_BYTES = 8  # SpawnRecord: kind, hard_only, x_pos (word), y_pos, area_byte, link_world, entrance_page
 SPAWN_LIST_LIMIT = 0x100  # enemy_offset is a byte: the number of a record in its list
 SPAWN_KINDS = {'end': 'SPAWN_END', 'skip': 'SPAWN_SKIP', 'link': 'SPAWN_LINK'}  # src/game/area.s
+# The operand of read_enemy_spawns' kind test of enemy slot 5 ($C160, the
+#   power-up's kind): no page skip may have that page.
 SLOT_5_KIND_AT = 0xC160  # read_enemy_spawns: the operand of the kind that slot 5 reads (the power-up)
 AREA_RECORD_BYTES = 5 + 2 + 2 + 2 * START_PAGES  # AreaRecord: 5 header bytes, spawn_list, rewinds, starts
 REWIND_ENTRY_BYTES = 4  # RewindEntry: record (word), after (word)
@@ -352,7 +302,7 @@ EVENT_ROUTINES = {
     'never_ends': 'backloading_never_ends',
 }
 
-# The objects (06 section 3): the routine of each object, by its row field
+# The objects: the routine of each object, by its row field
 # and kind.
 (VERTICAL_PIPE, LEDGE, BRICK_ROW, SOLID_ROW, COIN_ROW, BRICK_COLUMN, SOLID_COLUMN, PIT, PULLEY_ROPE,
  ROPE_BRIDGE, POND, PRIZE_ROW, LONG_ROPE, SCALE_ROPE, END_CASTLE, STAIRCASE, EXIT_PIPE, BALL_COLUMN,
@@ -370,16 +320,20 @@ ROW_13_ROUTINES = (ENTRANCE_PIPE, FLAGPOLE, AXE, CASTLE_PROP, BOWSER_BRIDGE, WAR
 class Rom:
     """The 32 KB program; $8000 is offset 0."""
 
+    # Keep the 32 KB program ROM used by the area builder.
     def __init__(self, program):
         assert len(program) == 0x8000
         self.program = program
 
+    # Read the byte at the original program ADDRESS.
     def byte(self, address):
         return self.program[address - PROGRAM_BASE]
 
+    # Read a little-endian address from ROM bytes at LOW and HIGH.
     def word(self, low, high):
         return self.byte(low) | self.byte(high) << 8
 
+    # Read SIZE bytes starting at the original program ADDRESS.
     def table(self, address, size):
         return self.program[address - PROGRAM_BASE: address - PROGRAM_BASE + size]
 
@@ -387,6 +341,7 @@ class Rom:
 class Metatiles:
     """The metatile numbers and the tables of the builder's rules."""
 
+    # Read the block numbers and area-building tables from ROM.
     def __init__(self, rom):
         b = rom.byte
         self.green = (b(GREEN_LEDGE_LEFT_AT), b(GREEN_LEDGE_MIDDLE_AT), b(GREEN_LEDGE_RIGHT_AT))
@@ -442,7 +397,7 @@ class Metatiles:
         self.wave_kinds = rom.table(WAVE_KINDS, WAVE_COUNT)
 
     def collision(self, column):
-        """The collision buffer column of a column (06 section 6 step 8)."""
+        """The collision buffer column of a column."""
         return bytes(v if v >= self.storable[v >> PALETTE_SHIFT] else 0 for v in column)
 
 
@@ -451,6 +406,8 @@ def area_of(area_byte):
     return (area_byte & AREA_BYTE_MASK) >> AREA_TYPE_SHIFT, area_byte & AREA_NUMBER_MASK
 
 
+# Find an area or enemy list address for AREA_TYPE and NUMBER.
+# BASES selects the first list; LOW and HIGH hold its address bytes.
 def list_address(rom, bases, low, high, area_type, number):
     i = rom.byte(bases + area_type) + number
     return rom.word(low + i, high + i)
@@ -458,8 +415,10 @@ def list_address(rom, bases, low, high, area_type, number):
 
 class Header:
     """The two header bytes of an area list, as load_area_addresses leaves
-    their variables (06 section 3; begin_area clears them before)."""
+    their variables (begin_area clears them before)."""
 
+    # Decode the two area header bytes into entrance, timer and scenery
+    # settings. A cloud style sets the cloud flag and uses style zero.
     def __init__(self, byte0, byte1):
         scenery = byte0 & HEADER_SCENERY
         self.backdrop = scenery if scenery >= BACKDROP_FIRST else 0
@@ -477,27 +436,30 @@ class Event:
     """A run-time event of a column build: its name (EVENT_ROUTINES), a
     world X (page x 256 + pixel) and a byte."""
 
+    # Record the event NAME, its world X position and its byte VALUE.
     def __init__(self, name, x=0, value=0):
         self.name, self.x, self.value = name, x, value
 
+    # Return the event fields used to compare or deduplicate events.
     def key(self):
         return (self.name, self.x, self.value)
 
+    # Show the event name and its position and value in hexadecimal.
     def __repr__(self):
         return f"{self.name}(${self.x:04X}, ${self.value:02X})"
 
 
 class NoObjectOnStartPage(Exception):
     """The start page has no object (other than a page skip): the original's
-    read_area_objects repeats its backloading pass forever (06 section 19)."""
+    read_area_objects repeats its backloading pass forever."""
 
 
 class ColumnBuilder:
-    """The original's column builder (06 sections 4-7) for one area, from
+    """The original's column builder for one area, from
     begin_area at start page START. build() makes one column, as
     build_column does at steps 7 and 3 of a set; next_column() steps the
     parser, as steps 4 and 0 do. Each method follows the original routine
-    named in its comment; the documents give the rules."""
+    named in its comment."""
 
     def __init__(self, tiles, area_type, objects, header, world, start):
         self.t = tiles
@@ -510,7 +472,7 @@ class ColumnBuilder:
         self.background = header.background
         self.foreground = header.foreground
         self.backdrop = header.backdrop
-        # begin_area (03 section 4.4, 06 section 7)
+        # begin_area
         self.page = start
         self.column = 0
         self.backloading = start
@@ -523,13 +485,13 @@ class ColumnBuilder:
         self.staircase = 0
         self.slot = 0  # obj_slot
         self.behind = 0  # parser_behind
-        # The hidden 1-up flag is the game's (06 section 4,
+        # The hidden 1-up flag is the game's (
         # build_hidden_extra_life): the build makes each column with it
         # clear, and again with it set when the column has such a block.
         self.hidden_1up = 0
         self.hidden_1up_seen = False
         # column_metatiles: the backloading pass runs before the column is
-        # cleared, so what it would draw is lost (06 section 6)
+        # cleared, so what it would draw is lost
         self.col = [0] * ROWS
         self.events = []
 
@@ -569,8 +531,7 @@ class ColumnBuilder:
         return self.objects[y + 1]
 
     def routine_of(self, y):
-        """(routine, kind) of the object at offset Y (dispatch_area_object,
-        06 section 3); kind: the routine's variant."""
+        """(routine, kind) of the object at offset Y (dispatch_area_object); kind: the routine's variant."""
         b0, b1 = self.b0(y), self.b1(y)
         row = b0 & ROW_FIELD
         if row == ROW_GROUP_14:
@@ -579,13 +540,13 @@ class ColumnBuilder:
             kind = b1 & ROW_13_KIND
             if not b1 & ROW_13_SPECIAL:
                 return None, 0  # a page skip
-            assert kind < len(ROW_13_ROUTINES), f"row 13 kind {kind} jumps past the table (06 L6)"
+            assert kind < len(ROW_13_ROUTINES), f"row 13 kind {kind} jumps past the table"
             return ROW_13_ROUTINES[kind], kind
         if row < ROW_GROUP_12:
             size = (b1 & GROUP_KIND) >> GROUP_SHIFT
             if size == 0:
                 kind = b1 & SMALL_KIND
-                assert kind < len(SMALL_ROUTINES), f"small kind {kind} is not in the lists (06 L6)"
+                assert kind < len(SMALL_ROUTINES), f"small kind {kind} is not in the lists"
                 return SMALL_ROUTINES[kind], kind
             if size == PIPE_CLASS and b1 & PIPE_ENTERABLE:
                 return VERTICAL_PIPE, 0
@@ -594,7 +555,7 @@ class ColumnBuilder:
         if row == ROW_GROUP_12:
             return ROW_12_ROUTINES[kind], kind
         assert row == ROW_GROUP_15
-        assert kind < len(ROW_15_ROUTINES), f"row 15 kind {kind} is not in the lists (06 L6)"
+        assert kind < len(ROW_15_ROUTINES), f"row 15 kind {kind} is not in the lists"
         return ROW_15_ROUTINES[kind], kind
 
     def skip_object_bytes(self):
@@ -602,7 +563,7 @@ class ColumnBuilder:
         assert self.offset <= BYTE, "area_offset is a byte"
         self.page_step = 0
 
-    # ---- one column (build_column, 06 section 6) ----
+    # ---- one column (build_column) ----
     def build(self):
         """The column at the parser: (13 metatiles, events)."""
         self.events = []
@@ -649,7 +610,7 @@ class ColumnBuilder:
             self.column = 0
             self.page = (self.page + 1) & BYTE
 
-    # ---- read_area_objects (06 section 7) ----
+    # ---- read_area_objects ----
     def read_area_objects(self):
         last = None
         while True:
@@ -687,7 +648,7 @@ class ColumnBuilder:
                         else:
                             self.dispatch()
                 # age_active_object counts the slot of obj_slot (the end of
-                # backloading sets it to 0: 06 L5)
+                # backloading sets it to 0)
                 x = self.slot
                 if self.slot_count[x] != COUNT_FREE:
                     self.slot_count[x] = (self.slot_count[x] - 1) & BYTE
@@ -696,7 +657,7 @@ class ColumnBuilder:
                 return
 
     def dispatch(self):
-        """dispatch_area_object and start_or_run_object (06 section 7)."""
+        """dispatch_area_object and start_or_run_object."""
         x = self.slot
         busy = self.slot_count[x] != COUNT_FREE
         y = self.slot_offset[x] if busy else self.offset
@@ -722,7 +683,7 @@ class ColumnBuilder:
             self.skip_object_bytes()
         self.run(routine, kind, x)
 
-    # ---- the helpers of the object routines (06 section 5) ----
+    # ---- the helpers of the object routines ----
     def set_fixed_length(self, x, count):
         """True at the object's first column (its counter is set)."""
         if self.slot_count[x] & SIGN:
@@ -773,7 +734,7 @@ class ColumnBuilder:
 
     def past_column(self, row, metatile):
         """A store at row 13. The original's column buffer (13 bytes) is
-        followed by hammer_owner of misc slot 0 (05a section 23), which gets
+        followed by hammer_owner of misc slot 0, which gets
         the metatile; the column does not change. Its values (an enemy slot
         0-5, or this store) never meet a keep rule of fill_column_rows, so
         the store always happens."""
@@ -789,7 +750,7 @@ class ColumnBuilder:
         """row_y_pixels."""
         return (row * ROW_PIXELS + FIRST_ROW_Y) & BYTE
 
-    # ---- the object routines (06 section 4) ----
+    # ---- the object routines ----
     def run(self, routine, kind, x):
         t = self.t
         ev = self.events.append
@@ -1090,7 +1051,7 @@ def joined_stream(name, builder, main):
 
 
 def send_player_back(builder, rom, check):
-    """The builder's part of send_player_back (06 section 15): the parse
+    """The builder's part of send_player_back: the parse
     page and the area object page go back 4 pages, the area page flag
     clears, the list goes back to the check's rewind offset. The object
     slots, the staircase and the scenery stay."""
@@ -1130,8 +1091,7 @@ class Area:
 
     def add_start(self, page):
         """The stream from start page PAGE, or None when the page has no
-        object: there the original's first column never ends (06 section
-        19)."""
+        object: there the original's first column never ends."""
         try:
             stream = joined_stream(f"page {page}", self.builder(page), self.main)
         except NoObjectOnStartPage:
@@ -1143,7 +1103,7 @@ class Area:
         return any(e.name == 'loop_look' for r in self.main.records for e in r.events)
 
     def add_rewinds(self):
-        """The streams after the loop rewinds (06 section 15). A check runs
+        """The streams after the loop rewinds. A check runs
         at column 0 of its page, before that column's build (the builder
         waits between two sets: the next record is that column's) or after
         it (the frames after step 7: the next record is the next column's).
@@ -1203,7 +1163,7 @@ class Area:
 # ---- The enemy lists ----------------------------------------------------------------------
 class SpawnEntry:
     """One record of the port's enemy list: an entry with its page resolved
-    by the reader's rules (06 section 12, 05a section 20.1 and L33)."""
+    by the reader's rules."""
 
     def __init__(self, kind, x=0, y=0, enemy=0, hard=False, area_byte=0, world=0, page=0):
         self.kind = kind  # 'enemy', 'link', 'skip', 'end'
@@ -1218,12 +1178,12 @@ class SpawnEntry:
 
 def spawn_entries(rom, address):
     """The records of the enemy list at ADDRESS. The page of each entry
-    follows the reader's rules (05a section 20.2 steps 6-7): an entry's page
+    follows the reader's rules: an entry's page
     select bit adds 1 to the running page only while the page flag is
     clear, and sets the flag; a row 15 entry is a page skip only while the
     flag is clear, and sets it; the flag clears when an entry is stepped
     past. So the entry after a page skip has its page select ignored, and a
-    row 15 entry with bit 7 set is an enemy at row 15 (05a L33). The pages
+    row 15 entry with bit 7 set is an enemy at row 15. The pages
     do not depend on when the entries are read: an entry that waits keeps
     the flag set, so its page select counts once, and a rewind starts the
     list again from its first entry with the page and the flag clear."""
@@ -1262,10 +1222,9 @@ def spawn_entries(rom, address):
 
 def game_starts(rom):
     """Every (area byte, world, start page) that the game's own tables give
-    begin_area (03 section 3): each slot of each world from page 0, the
+    begin_area: each slot of each world from page 0, the
     level's halfway page (not in the pipe intro areas: the player walks
-    there in the entry task, where the timer does not count, 05a section
-    6.1, and their enemy list is empty), and the entrance page of every
+    there in the entry task, where the timer does not count, and their enemy list is empty), and the entrance page of every
     area change in the world it names. The streams cover every page 0-31
     of each area; these starts decide which areas there are and their
     worlds, and each of them must have an object."""
@@ -1336,6 +1295,9 @@ def record_events(record):
     return out
 
 
+# area_columns (a data bank): every distinct column once, 26 bytes: the 13
+#   metatiles, row 0 first, then the 13 bytes of its collision buffer column
+#   (the metatile, or 0 below storable_bound_by_palette of its palette).
 class Layout:
     """area_columns and area_programs: every stream of every area, each
     record at its offset."""
@@ -1387,6 +1349,12 @@ class Layout:
         entry = area.starts[page]
         return self.never_ends if entry is None else self.at(entry)
 
+    # area_programs (a data bank): the ColumnRecords. A record: its column
+    #   (word: the offset in area_columns; COLUMN_HAS_EVENTS when events follow),
+    #   then with events their count (byte) and the events, 5 bytes each: the
+    #   run-time routine (word: a label of src/game/area.s), a position (word: a
+    #   world X, page x 256 + pixel, or an offset), a value (byte). The record
+    #   of a start page that has no object: one event that never ends.
     def programs(self, host):
         data = HostData()
 
@@ -1423,6 +1391,12 @@ class Layout:
         return data
 
 
+# spawn_records (a data bank): each enemy list as SpawnRecords of 8 bytes in list order, with the pages resolved here
+#   by the reader's rules: kind (byte 1 AND $3F, or SPAWN_END,
+#   SPAWN_SKIP: a page skip that the reader takes, where slot 5 stops as at
+#   the original's, SPAWN_LINK), hard_only (1: only with hard mode 2),
+#   x_pos (word: page x 256 + column x 16), y_pos (row x 16), and for a link
+#   its area byte, its world and its entrance page.
 def spawn_records(rom, areas, host):
     """spawn_records: each area's enemy list as SpawnRecords, in list order;
     {area byte: the offset of its first record}."""
@@ -1439,7 +1413,7 @@ def spawn_records(rom, areas, host):
                 kind = e.enemy
             else:
                 # the reader's slot 5 lets a skip pass only as the power-up's
-                # kind would: no page skip has that page (05a section 20.2 step 4)
+                # kind would: no page skip has that page
                 assert e.kind != 'skip' or e.enemy != slot_5_kind
                 kind = f"<({SPAWN_KINDS[e.kind]})"
                 host.imports.add(SPAWN_KINDS[e.kind])
@@ -1452,6 +1426,16 @@ def spawn_records(rom, areas, host):
     return data, first
 
 
+# area_records (a data bank): area_by_byte, a word for each area byte AND
+#   $7F: the offset of its AreaRecord (0: no list has that area byte). An
+#   AreaRecord: the header values (entrance, timer_setting, backdrop,
+#   area_style, cloud_override as begin_area leaves them), the
+#   offset of its first record in spawn_records, the offset of its rewind table
+#   (0: none), then for each start page 0-31 the offset of the first record
+#   in area_programs. A rewind table: per entry the record that the builder
+#   reads next at a loop check and the record to read after the rewind; it
+#   holds every record that the builder can read next at a check of the
+#   area (Area.add_rewinds), so the run-time search always ends in it.
 def area_records(layout, areas, spawn_first):
     """area_records: area_by_byte, the AreaRecords, the rewind tables."""
     data = HostData()
@@ -1478,8 +1462,9 @@ def area_records(layout, areas, spawn_first):
     return data
 
 
+# world_area_starts, area_slots (a data bank): as the ROM has them.
 def build(program, host):
-    """The area data of the game into the host data (see the module header)."""
+    """Build area columns, spawn records and area tables in host data."""
     rom = Rom(program)
     tiles = Metatiles(rom)
     areas = game_areas(rom, tiles)

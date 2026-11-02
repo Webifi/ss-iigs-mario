@@ -1,26 +1,26 @@
 ; The score of the game: the score numbers that float up from the enemies,
 ; the digit arithmetic of the scores, the coins and the game timer, the
 ; status bar numbers, the top score, the coins and their 1-up, and the game
-; timer's tick and its warning (document 07 sections 12-15).
+; timer's tick and its warning.
 ;
 ; Where it runs:
-;   - the frame (02 game_frame step 10): top_score_update, each frame, also
+;   - the frame (game_frame step 10): top_score_update, each frame, also
 ;     on the title;
-;   - the game core (03 game_core), in play and in the title's demo:
+;   - the game core (game_core), in play and in the title's demo:
 ;     score_numbers right after each enemy number's routine (0-5), and
 ;     tick_game_timer late in the core, after everything that can add score;
-;   - the rules that give points or coins (collision.s, 05a, 05b) call
+;   - the rules that give points or coins (collision.s, objects.s and enemies.s) call
 ;     start_score_number, add_score, add_one_coin, add_digit_amounts and
-;     refresh_status_number; the status bar setup (02) calls
-;     pick_status_nybbles, the title's top score (02) refresh_status_number;
-;     setup_entry_and_timer (03) calls reload_game_timer.
+;     refresh_status_number; the status bar setup calls
+;     pick_status_nybbles, the title's top score refresh_status_number;
+;     setup_entry_and_timer calls reload_game_timer.
 ;
 ; Data: the digit store (state.inc digits: one decimal digit 0-9 in each
-; byte, the highest first, in the original's relative layout, 07 section
-; 13), digit_add (the amounts of the six places of a run), the score number
+; byte, the highest first, in the original's relative layout), digit_add
+; (the amounts of the six places of a run), the score number
 ; fields of the enemy records (Object::score_*), the player record's lives
 ; and coins. Out: the digits, the status number records in screen list 1
-; (REC_CELLS, 02 section 11.4: list 1), the score number sprites in
+; (REC_CELLS, list 1), the score number sprites in
 ; sprite_list, the sound commands.
 ;
 ; In the title mode (mode 0) add_digit_amounts changes no digit: the demo
@@ -34,59 +34,45 @@
 ; status numbers, the digit arithmetic, the top score), $BBF8-$BC48 (the
 ; coin and score adders), $B74F-$B7A3 (the game timer), $DA11-$DA24
 ; (start_score_number), and the timer part of setup_entry_and_timer
-; ($9178-$9196) as reload_game_timer, split off for the modes part (03).
+; ($9178-$9196) as reload_game_timer, split off for the modes part.
 ; compare_with_top ($8F9E) is the second half of top_score_update; store_sum_digit
 ; ($8F75) is a step of add_digit_amounts.
 ;
-; Routines:
-;   start_score_number    a score number starts at an enemy
-;   score_numbers         an enemy's score number: its time, its points, its sprites
-;   add_digit_amounts     digit_add into a run of six digits, with carries
-;   add_one_coin          one coin: the coin digits, the count, a 1-up at 100, 200 points
-;   add_score             digit_add into the player's score, then the print
-;   pick_status_nybbles   the print of the player's coins and score
-;   refresh_status_number the print of two fields; a leading 0 of the score shows blank
-;   print_coins_and_score the print of the fields of two nybbles
-;   print_number_field    one status number into screen list 1
-;   top_score_update      a player's score that reaches the top score replaces it
-;   compare_with_top      the same, for one player
-;   tick_game_timer       the time: one unit each 24 frames, the warning, the end
-;   reload_game_timer     the time of an area's start
 
 .a8
 .i8
 
 ; ---- Values of this part -------------------------------------------------
-; The digit store (state.inc digits, 07 section 13): the start of each run.
+; The digit store (state.inc digits): the start of each run.
 DIGITS_TOP      = $00           ; the top score: 6 digits, millions to tens
 DIGIT_PLACES    = 6             ; digit_add: the amounts of a run's six places, the highest first
 DIGIT_FIRST_PLACE = 0           ; digit_add's first place: a score's millions
 DECIMAL_BASE    = 10
 DIGIT_BORROW    = 9             ; a digit whose sum is negative becomes 9
 .assert DIGITS_TIME + TIME_DIGITS = DIGITS_SIZE, error, "the time ends the digit store"
-; The score numbers (07 section 12).
+; The score numbers.
 SCORE_STEPS     = $30           ; a score number's steps (its time)
 SCORE_AWARD_STEP = $2B          ; the step whose time is this before the step gives the points: the sixth
 SCORE_TOP       = $18           ; a score number rises 1 pixel a step until its Y is below this
 SCORE_SPRITE_RISE = 8           ; while it rises its sprites are 8 above its Y
-SCORE_STOP_EXTRA = 1            ; and 1 more once it stops: the original's borrow of the compare (07 L6)
+SCORE_STOP_EXTRA = 1            ; and 1 more once it stops: the original's borrow of the compare
 SCORE_SPRITE_GAP = 8            ; the right sprite is 8 pixels right of the left one
 SCORE_PALETTE   = 2             ; the sprites' attributes: sprite palette 2
 SCORE_OWN_SPRITES_STATE = 2     ; a low kind from this state on shows its number in its own sprites
-; The coins (07 section 13).
+; The coins.
 COIN_ONES       = 1             ; add_one_coin: one coin
-; The status numbers (07 section 13).
+; The status numbers.
 NUMBER_FIELDS   = 6             ; print_number_field: fields 0-5 (values $F, 0-4); 6-15 write nothing
 FIELD_ROW       = 0             ; number_fields (scripts/collision_data.py): per field the cell row,
 FIELD_COLUMN    = 1             ;   the cell column (ring columns 0-31: name table 0),
 FIELD_COUNT     = 2             ;   the digits,
 FIELD_FIRST     = 3             ;   the offset of the first digit in the digit store
 FIELD_BYTES     = 4
-ORIGINAL_RECORD_HEAD = 3        ; the original's record: address high, address low, control, then the tiles (02 section 11.1)
+ORIGINAL_RECORD_HEAD = 3        ; the original's record: address high, address low, control, then the tiles
 ZERO_SUPPRESS_TILE = $24        ; refresh_status_number: the blank tile that a leading 0 of the score shows
 NYBBLE_MASK     = $0F           ; print_number_field: a field's nybble
 NYBBLE_NONE     = $0A           ; a nybble of no field
-; The game timer (07 section 14).
+; The game timer.
 TIME_TICK_FRAMES = $18          ; TIMER_GAME_TICK: one unit each 24 frames
 TIME_WARNING_HUNDREDS = 1       ; the time 100: the hurry song
 TIME_MINUS_ONE  = $FF           ; digit_add's amount -1
@@ -105,12 +91,11 @@ number_digits:  .res 1          ; print_number_field: the digits still to copy
 ; start_score_number: a score number starts at an enemy: its code, 48 steps
 ; of time, the enemy's Y and the screen X of the enemy group (rel_x +
 ; REL_ENEMY: the enemy whose routine runs, also when the number is
-; another's: 07 leftover 5). A later start for the same enemy replaces an
+; another's). A later start for the same enemy replaces an
 ; earlier one.
 ;
 ; In:       A8 I8; A = the score code (SCORE_*); D = the enemy's record
-; Out:      its score fields; A = the screen X (07 leftover 2:
-;           check_enemy_vs_tiles stuns with it)
+; Out:      its score fields; A = the screen X used by check_enemy_vs_tiles
 ; Changes:  A
 ; Keeps:    X, Y, D
 ; Time:     about 30 cycles
@@ -140,7 +125,7 @@ start_score_number:
 ; for a spiny, a piranha plant, the grey and red cheep-cheeps and a low kind
 ; in state 2 or more, else the block object's of sprite_offset_select) show
 ; the code's two tiles in palette 2, 8 above the Y while it rises and 9 once
-; it stops (07 leftover 6).
+; it stops.
 ;
 ; In:       A8 I8; D = the enemy's record
 ; Out:      its score fields; the lives, the score; two sprite entries
@@ -170,7 +155,7 @@ score_numbers:
         ldx Object::score_kind
         cpx #SCORE_1UP
         bne @points
-        inc player_record+PlayerRecord::lives ; no limit: a signed byte (07 leftover 12)
+        inc player_record+PlayerRecord::lives ; no limit: a signed byte
         lda #SQUARE2_EXTRA_LIFE
         sta snd_square2_queue
 @points:
@@ -238,7 +223,7 @@ score_numbers:
 ; and borrows 1 from the next place; a sum of 10 or more takes 10 off and
 ; carries 1. A carry or borrow out of the run's first place is lost: a score
 ; wraps from 9,999,990 to 0, and the coins carry into digits that nothing
-; shows (07 leftover 13). In the title mode the digits stay. digit_add
+; shows. In the title mode the digits stay. digit_add
 ; becomes 0 in both cases.
 ;
 ; In:       A8 I8; Y = the offset of the run's last digit in digits; digit_add
@@ -311,7 +296,7 @@ add_one_coin:
         cmp #COINS_FOR_LIFE
         bne @points
         stz player_record+PlayerRecord::coins
-        inc player_record+PlayerRecord::lives ; no limit: a signed byte (07 leftover 12)
+        inc player_record+PlayerRecord::lives ; no limit: a signed byte
         lda #SQUARE2_EXTRA_LIFE
         sta snd_square2_queue
 @points:
@@ -326,7 +311,7 @@ add_one_coin:
 ; the fields of the two nybbles in A (print_coins_and_score); then the
 ; first digit of the last field printed shows blank when it is 0. Every
 ; caller prints a six-digit field last (a score, or the top score on the
-; title), so that is its millions digit: 07 section 13.
+; title), so that is its millions digit.
 ;
 ; In:       A8 I8; digit_add (add_score); A = two nybbles
 ;           (refresh_status_number); any D
@@ -367,8 +352,7 @@ refresh_status_number:
 ; screen list 1: REC_CELLS at the field's cell row and column (number_fields,
 ; name table 0), the digits as their tiles (tile n shows the digit n), and
 ; the list's end byte after it. screen_list_1_original_end grows by the
-; record's length in the original's format, for the room rules of 02
-; section 11.4.
+; record's length in the original's format, for the room rules.
 ;
 ; In:       A8 I8; A = two nybbles (print_coins_and_score), one nybble in
 ;           the low bits (print_number_field); the digits
@@ -433,8 +417,8 @@ print_number_field:
 
 ; ---------------------------------------------------------------------------
 ; top_score_update: player 1's score, then player 2's, against the top
-; score, each frame: a score equal to or above the top score replaces it
-; (07 section 13). compare_with_top: one score. The digits compare from the
+; score, each frame: a score equal to or above the top score replaces it.
+; compare_with_top: one score. The digits compare from the
 ; first: at the first that differs a higher score digit copies the six
 ; digits; equal scores need no copy (the copy would change nothing).
 ;
@@ -484,7 +468,7 @@ compare_with_top:
 ; mode, in the player tasks below the control task or in the death task,
 ; for a player below the screen, or while the tick timer runs (it counts
 ; only while the frame timers step). At 000 the player dies (power 0, then
-; force_player_hurt) and the time-up flag counts (03 shows TIME UP). At 100
+; force_player_hurt) and the time-up flag counts (the mode shows TIME UP). At 100
 ; the hurry song starts (it plays as the time goes to 099). Else the time
 ; loses one unit and its field is printed; the next unit comes 24 frames
 ; later.
@@ -539,13 +523,13 @@ tick_game_timer:
 
 ; ---------------------------------------------------------------------------
 ; reload_game_timer: the time at an area's start (the timer part of
-; setup_entry_and_timer, 03): when the area has a time (timer_setting not 0)
+; setup_entry_and_timer): when the area has a time (timer_setting not 0)
 ; and the time is due (timer_reload not 0): N01 with N =
 ; timer_hundreds_by_setting[setting] (400, 300, 200; the first tick shows
 ; N00), and timer_reload clears. Else the digits stay: an area entered by a
 ; pipe keeps the time, and with no time the reload waits for the next area
 ; with one. The original also clears the star timer here; the area start
-; has cleared every timer before (03 begin_area), so that store is left out.
+; has cleared every timer before (begin_area), so that store is left out.
 ;
 ; In:       A8 I8; any D; timer_setting, timer_reload
 ; Out:      the time digits, timer_reload

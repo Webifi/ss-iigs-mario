@@ -1,154 +1,24 @@
-; The collisions of the game: the hit boxes and their overlap test, the tile
-; tests of the player, the enemies and the fireballs against the collision
-; buffers, the blocks that the player's head hits, the player against the
-; enemies (stomps, kicks, the star, injury and death), the enemies against
-; each other (moving shells), the fireballs against the enemies, the hammers
-; against the player, and the lifts under the player (document 07 sections
-; 1-11 and 17; the block hits also 05a section 17).
+; Collision tests for the player, enemies, fireballs, blocks and lifts.
+; game_core and the object code call these routines using the records in
+; state.inc. Background tests probe the two collision buffers; object tests
+; compare rectangles in box_corners. scripts/collision_data.py prepares the
+; block classes, test points and box shapes.
 ;
-; Where it runs: the game core of each frame of play and of the title's demo
-; (03 game_core, 07 section 1), in this order:
-;   1. the player task: control_player (04) builds the player's box with
-;      compute_hit_box_corners and runs check_player_vs_tiles (which can
-;      bump a block);
-;   2. the fireballs (05a move_fireball): fireball_hit_box,
-;      fireball_vs_tiles, fireballs_vs_enemies;
-;   3. each enemy number 0-5 (05b): enemy_hit_box, check_enemy_vs_tiles,
-;      enemies_bump_enemies, player_hits_enemy, then its move; the lifts
-;      their own boxes and lift tests;
-;   4. later: the misc objects (05a: hammer_hits_player, misc_hit_box).
-; fireballs_vs_enemies and player_hits_enemy act on even frames only,
-; enemies_bump_enemies and hammer_hits_player on odd frames (frame_count bit
-; 0); the box builds, the tile tests and the lift tests run each frame.
+; Player and fireball tests run before each enemy's collision and move.
+; Hammer tests run later with the miscellaneous objects. Fireball/enemy and
+; player/enemy contacts run on even frames; enemy/enemy and hammer/player
+; contacts run on odd frames. Box builds, tile tests and lift tests run
+; every frame. Hits can change object state, score, sound and screen records.
 ;
-; Data in: the object records (state.inc Object), the screen place of each
-; group (rel_x, rel_y, offscreen_bits: the sprite part, 11), the collision
-; buffers (the levels part, 06), the tables of scripts/collision_data.py
-; (bank 0, GAMEDATA). Data out: box_corners, the records' fields that the
-; rules of 07 change, the sound commands (snd_*_queue: the sound program
-; takes them in the next frame, 08), the screen records of the block
-; pictures through the screen part (02 section 18: blank_block_picture,
-; erase_coin_or_axe).
-;
-; The original's results that come from where its collision buffers lie
-; (buffer 1 at $0500, buffer 2 at $05D0 right after it) are reproduced on
-; purpose: the place of a probe is a ring column 0-31 (bit 4: the buffer) and
-; a row offset (16 x the row), the original's two values; read_probe_cell
-; and store_probe_cell take a row offset that wrapped as the original's
-; does, to the first rows of buffer 2 for a column of buffer 1 and to the
-; original's RAM after buffer 2 for a column of buffer 2 (past_buffer_bytes);
-; snap_player_to_vine sets the page only in column 0 of buffer 1 (07
-; leftover 11); launch_jump_coin (05a) reads the buffer bit of
-; probe_column (05a leftover L2).
-;
-; Registers: A8 I8 at each entry and exit unless a header says otherwise.
-; DBR = bank 0. D = the record of the object that a routine works on (its
-; header names it); the other records are read through the group labels of
-; state.inc. No variable is on the direct page.
-;
-; Original: $D6D9-$E434 and $BCED-$BE40. Merged or split for the port:
-;   probe_tile takes every test point: it holds the original's entries
-;   probe_tile_feet/head/side ($E3E8-$E3EF), tile_at_enemy_point ($E388),
-;   tile_at_fireball ($E39C), tile_lookup_return_y ($E3A3),
-;   tile_lookup_finish ($E3A5) and return_tile_part ($E42B); a caller that
-;   needs the low nybble of its object's X or Y ($04) reads it itself.
-;   check_player_vs_tiles holds check_player_feet ($DCF6) and its side
-;   test, whose side metatile goes to check_side_tile; block_player_sideways
-;   holds stop_x_speed ($DF66) and halt_player_sideways ($DDFF);
-;   landing_state_for_kind holds store_enemy_state ($E0FC); the gifts of
-;   hit_block ($BDD2-$BDE7) are local to it; collect_powerup holds
-;   become_fiery ($D847); player_hits_enemy goes on in stomp_check and
-;   enemy_stomped; the box offsets (enemy_box_offset, enemy_box_offset_for
-;   $DC52-$DC61) are 4 x the slot in each caller; enemy_no_box is the no-box
-;   part of box_or_hide ($E289); is_solid_tile, is_climbable_tile and
-;   palette_class_of_tile ($DF8F-$DFB8) are one lookup of metatile_class;
-;   is_hidden_block ($DEBD) and is_spring_tile ($DEDD) are compares in their
-;   callers; tile_under_enemy keeps its name for the point of the feet.
-;
-; Routines:
-;   compute_hit_box_corners  a box from the screen place and the box kind
-;   fix_box_wrap             a box that wraps past a screen edge is clipped
-;   fireball_hit_box         a fireball's box
-;   misc_hit_box             a misc object's (hammer's) box
-;   enemy_hit_box            an enemy's box, or none when it is off the screen
-;   small_lift_hit_box       a small lift's box, or none
-;   box_or_hide              the shared part of the last two
-;   enemy_no_box             the four corners of a box that is not there
-;   large_lift_hit_box       a large lift's box, or none
-;   build_enemy_hit_box      an enemy slot's box
-;   player_vs_object         a box against the player's box
-;   hit_box_overlap          two boxes: do they touch
-;   probe_tile               the metatile at a test point of an object
-;   read_probe_cell          the metatile at the probe's place
-;   store_probe_cell         a metatile into the probe's place
-;   read_past_buffers        the original's byte past buffer 2
-;   write_past_buffers       a byte into the original's RAM past buffer 2
-;   check_player_vs_tiles    the player's head, feet and sides
-;   check_side_tile          the metatile at a side point of the player
-;   block_player_sideways    a wall stops the player
-;   take_coin_tile           a coin that the player touches
-;   touch_axe                the axe: the victory mode starts
-;   erase_tile_in_buffer     the probe's cell and picture become empty
-;   grab_climbable           a pole or a vine catches the player
-;   snap_player_to_vine      the player climbs, on the column of the probe
-;   land_on_spring           a jump spring under the feet
-;   enter_pipe_check         down on a pipe's top: into the pipe, or a warp
-;   is_coin_tile             a coin metatile (with its sound)
-;   bump_block_from_below    the head hits a block: a bump or a break
-;   set_block_place          a block object at the player's column
-;   hit_block                a bumped block and its gift
-;   is_bumpable_block        a metatile of the bumpable list
-;   break_brick              a big player breaks a brick
-;   check_coin_above_block   a coin on the bumped block jumps out
-;   check_enemy_vs_tiles     an enemy's ground and walls
-;   stun_enemy_by_kind       the kind change of a stun, then stun_enemy
-;   stun_enemy               the enemy flips up, away from the player
-;   landing_state_for_kind   the state of an enemy with no ground
-;   check_enemy_sides        a wall in front of an enemy turns it
-;   bump_or_hammer_jump      the turn (or the hammer brother's jump)
-;   player_enemy_gap         the enemy's X - the player's X
-;   enemy_lands              an enemy stands on the row under it
-;   enemy_y_plus_62          the Y range of the enemy tile tests
-;   enemy_land_check         the jumping paratroopa's and the star's ground
-;   hammer_bro_tile_check    the hammer brother's ground
-;   kill_enemy_on_bumped_block  an enemy on a bumped block is knocked out
-;   tile_under_enemy         the metatile under an enemy's feet
-;   is_nonsolid_tile         the metatiles that enemies and fireballs pass
-;   fireball_vs_tiles        a fireball bounces or bursts
-;   fireballs_vs_enemies     a fireball against the enemies
-;   fireball_hits_enemy      what a fireball does to the enemy it hits
-;   knock_out_enemy          an enemy is defeated (fireball, star, shell, block)
-;   hammer_hits_player       a hammer against the player
-;   collect_powerup          the player takes the power-up
-;   player_hits_enemy        the player against an enemy: stomp, kick, hurt
-;   stomp_check              a stomp, or the hurt
-;   enemy_stomped            what a stomp does, by the enemy's kind
-;   hurt_if_facing_right     the hurt, after an enemy that moves away turns
-;   turn_enemy_then_hurt     the same, with the turn
-;   hurt_player              the hurt, unless the player blinks
-;   force_player_hurt        a big player shrinks, a small one dies
-;   set_player_routine       the player task of a change of size or a death
-;   bounce_player            the bounce of a stomp
-;   turn_enemy_toward_player the enemy's direction away from the player
-;   enemies_bump_enemies     an enemy against the enemies below it
-;   first_enemy_state        the first enemy's state while D is the second's
-;   resolve_enemy_bump       two enemies touch: a shell kills, others turn
-;   reverse_enemy            the enemy turns, if its kind turns
-;   negate_enemy_speed       the X speed and the direction change sign
-;   big_lift_hit_test        the player on a large lift
-;   check_player_on_big_lift one large lift's box against the player
-;   small_lift_hit_test      the player on a small lift (two boxes)
-;   resolve_lift_hit         the player under, on or beside a lift
-;   stand_on_small_lift      the player's feet on a small lift
-;   stand_on_vertical_lift   the player's feet on a lift that moves up or down
-;   player_out_of_range      the player is off the screen or too low
+; A, X and Y are 8-bit unless a routine says otherwise. DBR is bank 0;
+; D points to the object record named by the routine. Other records use the
+; group labels in state.inc.
 
 .a8
 .i8
 
-; ---- Values of the original program (07 unless named) --------------------
-; The test points of the tiles (rows of tile_point_x and tile_point_y, 07
-; section 4). The player's sets: tile_point_sets gives the first point of a
+; ---- Values of the original program --------------------
+; The test points of the tiles (rows of tile_point_x and tile_point_y). The player's sets: tile_point_sets gives the first point of a
 ; set; the set's seven points follow it in this order.
 POINT_HEAD      = 0             ; + the set's first point: the head
 POINT_LEFT_FOOT = 1
@@ -161,8 +31,8 @@ POINT_ENEMY_FEET = 21
 POINT_ENEMY_LEFT = 22
 POINT_ENEMY_RIGHT = 23
 POINT_FIREBALL  = 26
-POINT_VINE      = 27            ; the vine object's probe (05a run_vine)
-; The metatiles that the rules name (07 section 4, document 06).
+POINT_VINE      = 27            ; the vine object's probe (run_vine)
+; The metatiles that the rules name.
 METATILE_PIPE_LEFT = $10        ; the left and right halves of an enterable pipe's top
 METATILE_PIPE_RIGHT = $11
 METATILE_SIDE_PIPE_TOP = $1C    ; a side pipe's mouth: top, bottom
@@ -181,10 +51,10 @@ METATILE_WATER_COIN = $C3
 METATILE_AXE    = $C5
 ; Directions (Object::direction, player_facing).
 DIR_SWAP        = FACING_RIGHT | FACING_LEFT ; XOR: the other direction
-; An enemy's state (05b).
+; An enemy's state.
 ENEMY_SHELL_STATES = 6          ; 6 and up: a moving shell, for the shell test
 ; The box numbers: box_corners + CORNERS x the number. A box's number is its
-; record's slot, but for the misc objects (07 section 2).
+; record's slot, but for the misc objects.
 CORNERS         = 4             ; left, top, right, bottom
 CORNER_LEFT     = 0
 CORNER_TOP      = 1
@@ -199,13 +69,13 @@ BOX_OF_MISC     = 9             ; + the misc number: boxes 9-17 (misc slots 13-2
 LOW_NIBBLE      = $0F
 ALL_BITS        = $FF           ; EOR with every bit; with INC, the other sign
 ROW_MASK        = $F0           ; the top of a 16-pixel metatile row
-BUFFER_COLUMNS  = 16            ; the metatile columns of one collision buffer (06)
+BUFFER_COLUMNS  = 16            ; the metatile columns of one collision buffer
 RING_COLUMN_MASK = 2 * BUFFER_COLUMNS - 1 ; the columns of the two buffers: bit 4 is the buffer
 STATUS_BAR_HEIGHT = $20         ; buffer row 0 starts at screen Y $20, below the status bar
 BUFFER_PAIR_CELLS = 2 * COLLISION_BUFFER ; the cells of the two buffers: an index from here on is past buffer 2
 PAST_BUFFER_BYTES = 3 * BUFFER_COLUMNS ; the original's bytes after buffer 2 that a wrapped row reaches: $06A0-$06CF
 PAST_ZERO       = 0             ; past_buffer_bytes: a byte that the original never writes (0)
-PAST_FF         = 1             ; a byte that finish_area_setup sets to $FF at each area start (03 L3)
+PAST_FF         = 1             ; a byte that finish_area_setup sets to $FF at each area start
 PAST_CONSTANTS  = 2             ; entries below this are constants, not addresses
 AREA_START_FILL = $FF           ; the byte of PAST_FF
 COIN_SLOT_BYTES = 5             ; state.inc jump_coin_slot: the original's 5 bytes $06B7-$06BB
@@ -219,7 +89,7 @@ LIFT_LEFT_MASK  = $04           ; small_lift_hit_box: column 2 off
 LIFT_RIGHT_MASK = $08           ; column 1 off
 LIFT_OFF_SCREEN = $FE           ; find_x_offscreen from this up: the large lift has no box
 PLAYER_LOW_EDGE = $D0           ; player_out_of_range: a player on the screen at this Y or lower
-; The player against the tiles (07 section 5).
+; The player against the tiles.
 WALL_RIGHT      = 1             ; wall_side: a wall at the player's right
 WALL_LEFT       = 2             ; at his left
 PLAYER_TILE_LIMIT = $CF         ; no tile test from this Y down
@@ -248,14 +118,14 @@ WARP_GROUP      = $03           ; warp_zone: the group of its pipes in the low t
 WARP_PIPES      = 3             ; warp_pipe_worlds: 3 pipes in each group
 WARP_LEFT_PIPE  = $60           ; the player's X below this: the left pipe
 WARP_MIDDLE_PIPE = $A0          ; below this: the middle pipe
-; The block hits (07 section 6, 05a section 17).
+; The block hits.
 BLOCK_CENTRE    = 8             ; set_block_place: the player's middle
 BLOCK_Y_BIG     = 0             ; block_y_by_size: a big player standing, a small or crouching one
 BLOCK_Y_SMALL   = 1
 BLOCK_RISE_SPEED = $FE          ; the bumped block's Y speed
 BRICK_TENS      = 5             ; a broken brick: 50 points (digit_add place 5 is the tens)
 BLOCK_SELECT_SWAP = 1           ; sprite_offset_select XOR this: the other block object
-; The enemies against the tiles (07 section 7).
+; The enemies against the tiles.
 ENEMY_TILE_TOP  = 6             ; enemy_y_plus_62: the enemy tile tests for Y 6 to $C1
 ENEMY_TILE_BOTTOM = $C1
 SPINY_TILE_TOP  = $25           ; a spiny above this Y has no tile test
@@ -279,20 +149,20 @@ JUMP_FALLING    = 3
 ENEMY_HOP_SPEED = $FD           ; the jumping paratroopa's and the star's jump
 HAMMER_KEEP     = $88           ; hammer_bro_tile_check: the state bits that the landing keeps
 HAMMER_IN_AIR   = $01           ; the hammer brother's state bit 0: in the air
-HAMMER_PLAIN_JUMP = 0           ; launch_hammer_bro_jump's jump kind (05b: the original's t0)
+HAMMER_PLAIN_JUMP = 0           ; launch_hammer_bro_jump's jump kind (the original's t0)
 BUMPED_ENEMY_SPEED = $FC        ; kill_enemy_on_bumped_block: the Y speed
-; The fireballs (07 section 8).
+; The fireballs.
 FIREBALL_TEST_TOP = $18         ; no tile test above this Y
 FIREBALL_BOUNCE_SPEED = $FD
 FIREBALL_ROW_MASK = $F8         ; the bounce puts the fireball on an 8-pixel step
-FIREBALL_BURST  = $80           ; the fireball's state: it bursts (05a)
+FIREBALL_BURST  = $80           ; the fireball's state: it bursts
 FIREBALL_BOUNCING = 1           ; Object::bounce: the fireball bounced and has not left the ground
 FIREBALL_TESTED_ENEMIES = 5     ; fireballs_vs_enemies tests enemy numbers 4-0, never 5
 BOWSER_HOP_SPEED = $FE          ; defeated Bowser's small hop
 BOWSER_FALL_WORLDS = 3          ; worlds 1-3: the defeated state + BOWSER_EARLY_STATE
 BOWSER_EARLY_STATE = 3
-PIRANHA_DROP    = 25            ; knock_out_enemy: the piranha plant's Y + 25 (07 L1)
-; The player against the enemies (07 section 9).
+PIRANHA_DROP    = 25            ; knock_out_enemy: the piranha plant's Y + 25
+; The player against the enemies.
 CONTACT_PLAYER  = $01           ; Object::collision of an enemy: bit 0, the player touches it
 HAMMER_TOUCHED  = 1             ; Object::misc_hit: the hammer touches the player
 STOMP_REACH     = 12            ; kinds 7 and up: a stomp when the player's Y + 12 is above the enemy's Y
@@ -306,7 +176,7 @@ STAR_TIME       = $23           ; TIMER_STAR, slow ticks
 DEATH_JUMP_SPEED = $FC
 HURT_STATE      = PLAYER_JUMPING ; the player's state in the injury and death tasks
 TIMER_HOLD_ALL  = $FF           ; timer_hold: the timers wait (the frame counts it down)
-; The lifts (07 section 11).
+; The lifts.
 LIFT_NOT_ON     = $FF           ; a large lift's Object::on_lift: the player is not on it
 SMALL_LIFT_PASSES = 2           ; a small lift is tested at its place and 128 pixels lower
 SMALL_LIFT_HIDE = $02           ; offscreen_bits: column 3 off ends the small lift's test
@@ -322,8 +192,8 @@ PLAYER_HEIGHT   = $20           ; the player stands 32 pixels above a lift's Y
 ; The place of the last probe (probe_tile), in the original's two values.
 ; Written by probe_tile (and check_coin_above_block: the row above); read by
 ; this part's tile rules, the block records (bump_block_from_below), the
-; screen part's block pictures (02: blank_block_picture, erase_coin_or_axe)
-; and the objects part (05a: launch_jump_coin, the vine's probe).
+; screen part's block pictures (blank_block_picture, erase_coin_or_axe)
+; and the objects part (launch_jump_coin, the vine's probe).
                                 ; byte; the high byte stays 0, so a 16-bit read is the offset as a word
 ; check_player_vs_tiles.
 player_points:  .res 1          ; the first test point of the player's set (tile_point_sets)
@@ -331,7 +201,7 @@ feet_left:      .res 1          ; the metatile under the left foot (enter_pipe_c
 feet_right:     .res 1          ; under the right foot
 wall_side:      .res 1          ; block_player_sideways: WALL_RIGHT or WALL_LEFT; also the side test's pass
 bumped_metatile: .res 1         ; bump_block_from_below: the metatile that the head hit (hit_block's gift)
-; player_enemy_gap: written by it, read by its callers (05b reads the low byte too).
+; player_enemy_gap: written by it, read by its callers (enemy code reads the low byte too).
 enemy_gap:      .res 2          ; the enemy's X - the player's X: page and pixel
 ; fix_box_wrap.
 box_middle:     .res 2          ; the world X of the screen's middle
@@ -354,7 +224,7 @@ lift_player_value: .res 1       ; the value that Object::on_lift takes when the 
 .segment "GAMEPLAY"
 
 ; ===========================================================================
-; The hit boxes (07 section 2)
+; The hit boxes
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -372,7 +242,7 @@ lift_player_value: .res 1       ; the value that Object::on_lift takes when the 
 ; Keeps:    D
 ; Time:     about 90 cycles
 ; Original: $E29C-$E2DD (compute_hit_box_corners); the player's box (box 0,
-;           group 0) is built by control_player (04) with it
+;           group 0) is built by control_player with it
 ; ---------------------------------------------------------------------------
 compute_hit_box_corners:
 .a8
@@ -416,7 +286,7 @@ compute_hit_box_corners:
 ; becomes 0, with the right edge when it is 128 or more. The world X is
 ; that of the slot whose number is the box number: the object's own slot,
 ; but for a misc box (box 9 + m) slot 9 + m, a block object or another misc
-; object (07 leftover 4): its side of the screen clips the hammer's box.
+; object: its side of the screen clips the hammer's box.
 ;
 ; In:       A8 I8; X = CORNERS x the box number; screen_left
 ; Out:      box_corners of the box
@@ -489,7 +359,7 @@ fireball_hit_box:
 
 ; ---------------------------------------------------------------------------
 ; misc_hit_box: the box of a misc object (a hammer): box 9 + its misc number,
-; then the wrap clip, which reads the X of slot 9 + m (07 leftover 4).
+; then the wrap clip, which reads the X of slot 9 + m.
 ;
 ; In:       A8 I8; D = the misc object's record; its screen place (REL_MISC)
 ; Out:      its box_corners
@@ -539,7 +409,7 @@ small_lift_hit_box:
 ; one when the enemy's world X is at or left of the screen's left edge, else
 ; the right one; Object::offscreen = the mask AND the enemy's offscreen bits.
 ; Not 0: the four corners become NO_BOX (no test of the game overlaps such a
-; box, 07 section 3). Else build_enemy_hit_box.
+; box). Else build_enemy_hit_box.
 ;
 ; In:       A8 I8; A = the left mask, Y = the right mask; D = the enemy's
 ;           record
@@ -606,7 +476,7 @@ enemy_no_box:
 large_lift_hit_box:
 .a8
 .i8
-        jsr find_x_offscreen            ; the sprite part (11): A = the lift's column bits
+        jsr find_x_offscreen            ; the sprite part: A = the lift's column bits
         cmp #LIFT_OFF_SCREEN
         bcs enemy_no_box
         ; falls into build_enemy_hit_box
@@ -636,7 +506,7 @@ build_enemy_hit_box:
 ;
 ; Each axis (X: left and right; Y: top and bottom) is tested with the
 ; original's six cases on the 8-bit edges, with bl, bh the low and high
-; edges of B and al, ah those of A (07 section 3):
+; edges of B and al, ah those of A:
 ;   bl = al: touch.                 bl < al, bl = ah: touch.
 ;   bl < al, bl < ah: touch when A wraps (ah < al) or bh >= al.
 ;   bl < al, bl > ah: touch when B wraps (bh < bl) or bh >= al.
@@ -644,7 +514,7 @@ build_enemy_hit_box:
 ;   bl > al, bl > ah: touch when B wraps (bl > bh) and bh >= al.
 ; For boxes that do not wrap this is the plain overlap, edges included. The
 ; Y axis is tested only when the X axis touches. The cases are kept because
-; the boxes that fix_box_wrap leaves wrapped (07 leftovers 4, 7, 9) and the
+; the boxes that fix_box_wrap leaves wrapped (7, 9) and the
 ; Y edges near 255 depend on them.
 ;
 ; In:       A8 I8; Y = CORNERS x box B; X = CORNERS x box A
@@ -723,7 +593,7 @@ boxes_touch_on_axis:
         rts
 
 ; ===========================================================================
-; The tile tests (07 section 4)
+; The tile tests
 ; ===========================================================================
 
 ; probe_cell_index: X16 = the index of the probe's cell in the original's two
@@ -744,6 +614,26 @@ boxes_touch_on_axis:
         adc probe_row                   ; the row offset as a word
         tax
 .endmacro
+
+; Original: $D6D9-$E434 and $BCED-$BE40. Merged or split for the port:
+;   probe_tile takes every test point: it holds the original's entries
+;   probe_tile_feet/head/side ($E3E8-$E3EF), tile_at_enemy_point ($E388),
+;   tile_at_fireball ($E39C), tile_lookup_return_y ($E3A3),
+;   tile_lookup_finish ($E3A5) and return_tile_part ($E42B); a caller that
+;   needs the low nybble of its object's X or Y ($04) reads it itself.
+;   check_player_vs_tiles holds check_player_feet ($DCF6) and its side
+;   test, whose side metatile goes to check_side_tile; block_player_sideways
+;   holds stop_x_speed ($DF66) and halt_player_sideways ($DDFF);
+;   landing_state_for_kind holds store_enemy_state ($E0FC); the gifts of
+;   hit_block ($BDD2-$BDE7) are local to it; collect_powerup holds
+;   become_fiery ($D847); player_hits_enemy goes on in stomp_check and
+;   enemy_stomped; the box offsets (enemy_box_offset, enemy_box_offset_for
+;   $DC52-$DC61) are 4 x the slot in each caller; enemy_no_box is the no-box
+;   part of box_or_hide ($E289); is_solid_tile, is_climbable_tile and
+;   palette_class_of_tile ($DF8F-$DFB8) are one lookup of metatile_class;
+;   is_hidden_block ($DEBD) and is_spring_tile ($DEDD) are compares in their
+;   callers; tile_under_enemy keeps its name for the point of the feet.
+;
 
 ; ---------------------------------------------------------------------------
 ; probe_tile: the metatile at a test point of an object, and its place.
@@ -788,6 +678,17 @@ probe_tile:
         sta probe_row
         ; falls into read_probe_cell
 
+; The original's results that come from where its collision buffers lie
+; (buffer 1 at $0500, buffer 2 at $05D0 right after it) are reproduced on
+; purpose: the place of a probe is a ring column 0-31 (bit 4: the buffer) and
+; a row offset (16 x the row), the original's two values; read_probe_cell
+; and store_probe_cell take a row offset that wrapped as the original's
+; does, to the first rows of buffer 2 for a column of buffer 1 and to the
+; original's RAM after buffer 2 for a column of buffer 2 (past_buffer_bytes);
+; snap_player_to_vine sets the page only in column 0 of buffer 1 ; launch_jump_coin reads the buffer bit of
+; probe_column.
+;
+
 ; ---------------------------------------------------------------------------
 ; read_probe_cell: the metatile at the probe's place. A row offset that
 ; wrapped to $D0-$F0 reads past the column's 13 rows as the original's
@@ -803,7 +704,7 @@ probe_tile:
 ; Changes:  A, X
 ; Keeps:    Y, D
 ; Time:     about 50 cycles in the buffers
-; Original: the read of probe_tile ($E417); the reads of the vine (05a) and
+; Original: the read of probe_tile ($E417); the reads of the vine and
 ;           of check_coin_above_block, bump_block_from_below
 ; ---------------------------------------------------------------------------
 read_probe_cell:
@@ -844,7 +745,7 @@ read_probe_cell:
 ; Keeps:    Y, D
 ; Time:     about 55 cycles in the buffers
 ; Original: the stores at $DE20 (erase), $BD65 (bump), $BE34 (coin above),
-;           $DFE6 (enemy on a bumped block), the vine's (05a)
+;           $DFE6 (enemy on a bumped block), the vine's
 ; ---------------------------------------------------------------------------
 store_probe_cell:
 .a8
@@ -946,18 +847,18 @@ past_buffer_entry:
 ; past_buffer_bytes: the original's RAM after buffer 2, $06A0-$06CF, one
 ; entry per byte: the port's variable of the same value, or PAST_ZERO /
 ; PAST_FF. The values must be the original's: column_in_buffer and
-; column_metatiles as the area builder keeps them (06), hammer_owner the
-; enemy number of the thrower and jump_coin_slot the misc number (05a).
+; column_metatiles as the area builder keeps them, hammer_owner the
+; enemy number of the thrower and jump_coin_slot the misc number.
 past_buffer_bytes:
-        .addr column_in_buffer          ; $06A0: the area builder's next buffer column (06)
+        .addr column_in_buffer          ; $06A0: the area builder's next buffer column
         .repeat METATILE_ROWS, I
-        .addr column_metatiles + I      ; $06A1-$06AD: the metatiles of the column it built last (06)
+        .addr column_metatiles + I      ; $06A1-$06AD: the metatiles of the column it built last
         .endrepeat
         .repeat MISC_SLOTS, I
-        .addr misc_objects + I * OBJECT_PAGE + Object::hammer_owner ; $06AE-$06B6 (05a)
+        .addr misc_objects + I * OBJECT_PAGE + Object::hammer_owner ; $06AE-$06B6
         .endrepeat
         .repeat COIN_SLOT_BYTES, I
-        .addr jump_coin_slot + I        ; $06B7-$06BB (05a)
+        .addr jump_coin_slot + I        ; $06B7-$06BB
         .endrepeat
         .addr coin_brick_flag           ; $06BC
         .addr PAST_ZERO                 ; $06BD
@@ -965,7 +866,7 @@ past_buffer_bytes:
         .addr misc_objects + I * OBJECT_PAGE + Object::misc_hit ; $06BE-$06C6: the hammers' contact
         .endrepeat
         .addr PAST_ZERO, PAST_ZERO      ; $06C7, $06C8
-        .addr PAST_FF                   ; $06C9 (finish_area_setup, 03 L3)
+        .addr PAST_FF                   ; $06C9 (finish_area_setup)
         .addr PAST_ZERO                 ; $06CA
         .addr frenzy_kind               ; $06CB
         .addr hard_mode_2               ; $06CC
@@ -1027,7 +928,7 @@ is_nonsolid_tile:
 @done:  rts
 
 ; ===========================================================================
-; The player against the tiles (07 section 5)
+; The player against the tiles
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -1036,7 +937,7 @@ is_nonsolid_tile:
 ;
 ; The state of the frame: 1 in a water area, else 0 (on the ground) and 3
 ; (climbing) become 2 (falling); the landing sets 0 again. The side bits
-; become SIDES_FREE. Then the steps (07 section 5):
+; become SIDES_FREE. Then the steps:
 ;   head: from player_head_limits down: a coin is taken (the test ends);
 ;     when the player rises and the Y's low nybble is 4 or more, a solid
 ;     metatile stops the rise (the bump sound, not for the vine's blank),
@@ -1051,9 +952,9 @@ is_nonsolid_tile:
 ;   sides: left (upper, lower), then right: the first metatile found
 ;     (check_side_tile).
 ; The original's tests of Y against $CF, $E4 and $D0 after the start's test
-; of Y < $CF never act and are left out (07 section 18).
+; of Y < $CF never act and are left out.
 ;
-; In:       A8 I8; D = the player's record (control_player, 04)
+; In:       A8 I8; D = the player's record (control_player)
 ; Out:      the player's state, Y, Y speed, X and side bits; stomp_chain;
 ;           the rules' other effects
 ; Changes:  A, X, Y, the variables of the routines it calls
@@ -1228,8 +1129,8 @@ check_player_vs_tiles:
 .assert PLAYER_ON_GROUND = 0, error, "check_player_vs_tiles: stz sets the state"
 
 ; ---------------------------------------------------------------------------
-; check_side_tile: the metatile at a side point of the player (07 section 5,
-; step 6): a hidden block does nothing; a climbable metatile catches him; a
+; check_side_tile: test the metatile at a side point of the player. A hidden
+; block does nothing; a climbable metatile catches him; a
 ; coin is taken; a jump spring stops him unless it moves; a side pipe's
 ; mouth takes him when he stands and faces right (the pipe sound once, behind
 ; the background, the area change wait until his X is on a 16-pixel step,
@@ -1319,7 +1220,7 @@ take_coin_tile:
         jmp add_one_coin
 
 ; ---------------------------------------------------------------------------
-; touch_axe: the axe ends the castle: the victory mode (03) from its first
+; touch_axe: the axe ends the castle: the victory mode from its first
 ; task, the player runs right, the axe's cell and picture become empty. The
 ; cell is the last probe's: when the axe is under the left foot only, that
 ; is the right foot's cell (the right foot is probed after the left), as in
@@ -1361,7 +1262,7 @@ erase_tile_in_buffer:
         jsr store_probe_cell
         ldx probe_column
         ldy probe_row
-        jmp erase_coin_or_axe           ; the screen part (02): X = the ring column 0-31, Y = the row offset
+        jmp erase_coin_or_axe           ; the screen part: X = the ring column 0-31, Y = the row offset
 
 ; ---------------------------------------------------------------------------
 ; block_player_sideways: a wall stops the player. A wall at his right
@@ -1464,7 +1365,7 @@ grab_climbable:
         beq @slide
         phd                             ; the levels part works on the enemy records
         lda #KIND_BULLET_CANNON
-        jsr clear_enemies_of_kind       ; 06: enemy numbers 4-0 of that kind end
+        jsr clear_enemies_of_kind ; enemy numbers 4-0 of that kind end
         pld
         lda #EVENT_SILENCE
         sta snd_event_queue
@@ -1491,7 +1392,7 @@ grab_climbable:
 ; facing right, +7 facing left); near the screen's left edge he faces left.
 ; The page is set only for column 0 of buffer 1 (probe_column 0): the
 ; screen's right page + climb_page_adders[facing]; in column 0 of buffer 2
-; the page stays (07 leftover 11).
+; the page stays.
 ;
 ; In:       A8 I8; D = the player's record; probe_column
 ; Out:      the player's state, X speed, player_x_fraction, X, facing
@@ -1506,7 +1407,7 @@ snap_player_to_vine:
         lda #PLAYER_CLIMBING
         sta Object::state
         stz Object::x_speed
-        stz Object::x_speed_fraction    ; 04: the fraction of the X speed
+        stz Object::x_speed_fraction ; the fraction of the X speed
         lda Object::x_pos
         sec
         sbc screen_left                 ; the screen X (low bytes)
@@ -1534,7 +1435,7 @@ snap_player_to_vine:
 
 ; ---------------------------------------------------------------------------
 ; land_on_spring: feet that land on a jump spring's metatile start the
-; spring (the objects part runs it, 05a section 10).
+; spring (the objects part runs it).
 ;
 ; In:       A8 I8; A = the foot's metatile
 ; Out:      gravity_up, spring_force, timers+TIMER_SPRING, spring_anim
@@ -1552,7 +1453,7 @@ land_on_spring:
         bne @done
 @spring:
         lda #SPRING_GRAVITY
-        sta gravity_up                  ; 04: the gravity in use
+        sta gravity_up ; the gravity in use
         lda #SPRING_FORCE
         sta spring_force
         lda #SPRING_FRAMES
@@ -1567,8 +1468,8 @@ land_on_spring:
 ; the area change, the pipe sound, the player behind the background). In a
 ; warp zone the pipe (by the player's X: left below $60, middle below $A0,
 ; else right) sends him to the first area of its world: warp_pipe_worlds and
-; warp_pipe_areas of group warp_zone AND 3 (07 section 5; the blank pipes of
-; group 1, reached with warp_zone 1, give world $23: 07 leftover 15); the
+; warp_pipe_areas of group warp_zone AND 3 (the blank pipes of
+; group 1, reached with warp_zone 1, give world $23); the
 ; entrance and the level start at 0, the hidden 1-up block shows, the time
 ; starts again.
 ;
@@ -1631,7 +1532,7 @@ enter_pipe_check:
 .assert WARP_PIPES = 3, error, "enter_pipe_check: the group x 3 is a shift and an add"
 
 ; ===========================================================================
-; The block hits from below (07 section 6, 05a section 17)
+; The block hits from below
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -1674,7 +1575,7 @@ bump_block_from_below:
 @state: sta Object::state
         ldx probe_column
         ldy probe_row
-        jsr blank_block_picture         ; the screen part (02): X = the ring column 0-31, Y = the row offset
+        jsr blank_block_picture         ; the screen part: X = the ring column 0-31, Y = the row offset
         lda probe_row
         sta Object::block_origin_y
         lda probe_column
@@ -1747,7 +1648,7 @@ bump_block_from_below:
 ; Keeps:    X, Y, D
 ; Time:     about 45 cycles
 ; Original: $BD84-$BD9A (set_block_place); also called by the vine entrance
-;           (03 setup_entry_and_timer, block 0)
+;           (setup_entry_and_timer, block 0)
 ; ---------------------------------------------------------------------------
 set_block_place:
 .a8
@@ -1760,7 +1661,7 @@ set_block_place:
         sta Object::x_pos
         a8
         xba
-        sta Object::block_page          ; the second copy of the page (05a launch_jump_coin)
+        sta Object::block_page          ; the second copy of the page (launch_jump_coin)
         lda player_object+Object::y_pos+1
         sta Object::y_pos+1
         rts
@@ -1772,7 +1673,7 @@ set_block_place:
 ; (bump_gifts), by the original's effect table: the mushroom or the flower,
 ; a coin, the 1-up, the vine, the star. A coin that jumps out from above
 ; takes the gift away: the original keeps the head's metatile in a scratch
-; byte ($05) that the coin's picture write overwrites (02
+; byte ($05) that the coin's picture write overwrites (
 ; write_metatile_record writes $03-$05: the high byte of the coin's name
 ; table address, $20-$27, which is no bumpable metatile), so its gift test
 ; finds nothing. The block still becomes its replacement metatile.
@@ -1803,12 +1704,12 @@ hit_block:
         jsr is_bumpable_block
         bcc @done
         txa
-        asl a                           ; the carry is clear: pop_block_coin starts so (05a L1, the original's jump)
+        asl a                           ; the carry is clear: pop_block_coin starts so (the original's jump)
         tax
         jmp (.loword(@gifts),x)         ; the table is in this bank (K)
 @done:  rts
 @gifts: .addr @mushroom                 ; a question block with an item
-        .addr pop_block_coin            ; a question block with a coin (05a)
+        .addr pop_block_coin            ; a question block with a coin
         .addr pop_block_coin            ; a hidden coin block
         .addr @life                     ; the hidden 1-up block
         .addr @mushroom                 ; a brick with an item
@@ -1816,7 +1717,7 @@ hit_block:
         .addr @star                     ; a brick with a star
         .addr pop_block_coin            ; a coin brick
         .addr @life                     ; a brick with a 1-up
-; The power-up gifts: the kind, then release_powerup (05a: the power-up in
+; The power-up gifts: the kind, then release_powerup (the power-up in
 ; enemy slot 5 at the block's place; a mushroom is a flower for a big player).
 @mushroom:
         lda #POWERUP_MUSHROOM
@@ -1826,9 +1727,9 @@ hit_block:
 @life:  lda #POWERUP_1UP
 @powerup:
         sta powerup_kind
-        jmp release_powerup             ; 05a: D = the block object
+        jmp release_powerup ; D = the block object
 @vine:  ldy sprite_offset_select
-        jmp start_vine                  ; 05a: the vine in enemy slot 5 at block Y (D = the block object)
+        jmp start_vine ; the vine in enemy slot 5 at block Y (D = the block object)
 
 ; ---------------------------------------------------------------------------
 ; is_bumpable_block: is a metatile in the bumpable list, and its gift.
@@ -1860,7 +1761,7 @@ is_bumpable_block:
 ; ---------------------------------------------------------------------------
 ; break_brick: a big player breaks a brick: a coin above it jumps out, the
 ; empty metatile goes back at the next chance, the brick sound, the four
-; pieces (05a scatter_brick_chunks), the player's rise slows, 50 points.
+; pieces (scatter_brick_chunks), the player's rise slows, 50 points.
 ;
 ; In:       A8 I8; D = the block object's record; probe_column, probe_row
 ; Out:      Object::block_replace, the player's Y speed, the score
@@ -1877,7 +1778,7 @@ break_brick:
         sta Object::block_replace
         lda #NOISE_BRICK_SHATTER
         sta snd_noise_queue
-        jsr scatter_brick_chunks        ; 05a: D = the block object
+        jsr scatter_brick_chunks ; D = the block object
         lda #BRICK_PLAYER_SPEED
         sta player_object+Object::y_speed_whole
         lda #BRICK_TENS
@@ -1913,15 +1814,15 @@ check_coin_above_block:
         jsr store_probe_cell
         ldx probe_column
         ldy probe_row
-        jsr erase_coin_or_axe           ; the screen part (02)
-        jsr launch_jump_coin            ; 05a: D = the block object; probe_column, probe_row
+        jsr erase_coin_or_axe           ; the screen part
+        jsr launch_jump_coin ; D = the block object; probe_column, probe_row
         sec
         rts
 @none:  clc
         rts
 
 ; ===========================================================================
-; The enemies against the tiles (07 section 7)
+; The enemies against the tiles
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -1933,12 +1834,12 @@ check_coin_above_block:
 ;   A block in motion: its cell becomes empty; the power-up is stunned by
 ;     its kind; a goomba is knocked out, then (as every other kind) gets
 ;     100 points and the stun with A = the screen X that start_score_number
-;     leaves (07 leftover 2: a screen X of 9 or $0D-$10 changes the kind).
-;   Other ground: with the Y's low nybble 8-12 the enemy lands by its state
-;     (07 section 7, step 5), else it falls on.
+;     leaves (a screen X of 9 or $0D-$10 changes the kind).
+;   Other ground: with the Y's low nybble 8-12 the enemy lands by its state,
+; else it falls on.
 ;
 ; In:       A8 I8; D = the enemy's record (also the mushroom and the 1-up,
-;           05a run_powerup)
+;           run_powerup)
 ; Out:      the enemy's state, place, speeds, direction, kind; the cell
 ; Changes:  A, X, Y
 ; Keeps:    D
@@ -2064,7 +1965,7 @@ check_enemy_vs_tiles:
 ; stun_enemy_by_kind: when A is 9 or $0D-$10, the enemy's kind becomes A AND
 ; 1 (a green or red koopa); then stun_enemy. A is the kind for most callers;
 ; knock_out_enemy gives a piranha plant's Y + 25 and check_enemy_vs_tiles
-; the screen X (07 leftover 2).
+; the screen X.
 ; stun_enemy: the enemy flips up: state (state AND $F0) OR 2, 2 pixels up
 ; (the Y pixel only), Y speed $FD ($FF in a water area or for a blooper),
 ; the direction away from the player (the bullet bills keep theirs) and the
@@ -2128,8 +2029,7 @@ stun_enemy:
 ; walks turns at the edge (bump_or_hammer_jump) and the test ends. Else a
 ; state with bit 7 gets bit 6 (it falls), any other state becomes
 ; enemy_landing_states[state] (the builder's table holds the bytes after the
-; six states too, which the original reads for a state of 6 and up: 07
-; leftover 14); then check_enemy_sides.
+; six states too, which the original reads for a state of 6 and up); then check_enemy_sides.
 ;
 ; In:       A8 I8; D = the enemy's record
 ; Out:      the enemy's state; check_enemy_sides
@@ -2194,7 +2094,7 @@ check_enemy_sides:
 ; ---------------------------------------------------------------------------
 ; bump_or_hammer_jump: an enemy at a wall or an edge: a moving shell in
 ; enemy numbers 0-4 plays the bump sound; a hammer brother jumps (Y speed
-; $FA, the plain jump of 05b launch_hammer_bro_jump); any other kind turns
+; $FA, the plain jump of launch_hammer_bro_jump); any other kind turns
 ; (negate_enemy_speed).
 ;
 ; In:       A8 I8; D = the enemy's record
@@ -2220,7 +2120,7 @@ bump_or_hammer_jump:
         jmp negate_enemy_speed
 @jump:  ldy #HAMMER_JUMP_HIGH
         lda #HAMMER_PLAIN_JUMP
-        jmp launch_hammer_bro_jump      ; 05b: D = the brother, Y = the jump's Y speed, A = the jump kind
+        jmp launch_hammer_bro_jump ; D = the brother, Y = the jump's Y speed, A = the jump kind
 
 ; ---------------------------------------------------------------------------
 ; player_enemy_gap: the enemy's world X - the player's world X, one 16-bit
@@ -2230,7 +2130,7 @@ bump_or_hammer_jump:
 ; Out:      enemy_gap = the gap (page and pixel); A = its page part, N its
 ;           sign (set: the enemy is left of the player); carry set when the
 ;           enemy's X is the player's or more (the original's carry of its
-;           page subtraction, which 05b L1 and L13 read)
+;           page subtraction, used by the enemy routines)
 ; Changes:  A
 ; Keeps:    X, Y, D
 ; Time:     about 30 cycles
@@ -2392,7 +2292,7 @@ tile_under_enemy:
         jmp probe_tile
 
 ; ===========================================================================
-; The fireballs (07 section 8)
+; The fireballs
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -2446,7 +2346,7 @@ fireball_vs_tiles:
 ; its mask. A touch bursts the fireball (state $80) and runs
 ; fireball_hits_enemy; the loop goes on, so a burst fireball can still hit
 ; a lower enemy number in the same frame. The enemy boxes are those that
-; the enemy loop built in the frame before (07 section 1).
+; the enemy loop built in the frame before.
 ;
 ; In:       A8 I8; D = the fireball's record
 ; Out:      the fireball's state; fireball_hits_enemy
@@ -2535,7 +2435,7 @@ fireballs_vs_enemies:
 fireball_hits_enemy:
 .a8
 .i8
-        jsr enemy_screen_position       ; the sprite part (11): rel_x, rel_y of REL_ENEMY
+        jsr enemy_screen_position       ; the sprite part: rel_x, rel_y of REL_ENEMY
         phd                             ; the enemy that was hit: its score number
         lda Object::active
         bpl @own
@@ -2593,9 +2493,8 @@ fireball_hits_enemy:
 
 ; ---------------------------------------------------------------------------
 ; knock_out_enemy: an enemy is defeated by a fireball, the star, a moving
-; shell or a block in motion: a piranha plant drops 25 pixels (07 leftover
-; 1), the stun by the kind (for the piranha plant by its new Y: leftover
-; 2), the defeated state, the score number (200; a hammer brother 1000, a
+; shell or a block in motion: a piranha plant drops 25 pixels; the stun
+; depends on the kind (for a piranha plant, on its new Y); the defeated state, the score number (200; a hammer brother 1000, a
 ; goomba 100) and the smack sound.
 ;
 ; In:       A8 I8; D = the enemy's record
@@ -2635,7 +2534,7 @@ knock_out_enemy:
         rts
 
 ; ===========================================================================
-; The player against the enemies and the hammers (07 section 9)
+; The player against the enemies and the hammers
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -2643,8 +2542,7 @@ knock_out_enemy:
 ; timers wait (that stands for the task test) or the hammer is partly off
 ; the screen. Apart: its contact byte clears. A touch acts once: the
 ; contact byte, the hammer flies back, and without the star hurt_player. The
-; player's box is the last one that the control routine built (07 leftover
-; 10).
+; player's box is the last one that the control routine built.
 ;
 ; In:       A8 I8; D = the hammer's record
 ; Out:      Object::misc_hit, the hammer's X speed, hurt_player
@@ -2702,7 +2600,7 @@ hammer_hits_player:
 collect_powerup:
 .a8
 .i8
-        jsr clear_enemy_slot            ; 05b: D = the slot
+        jsr clear_enemy_slot ; D = the slot
         lda #SCORE_1000
         jsr start_score_number
         lda #SQUARE2_POWERUP_GRAB
@@ -2726,7 +2624,7 @@ collect_powerup:
         bne @done                       ; fiery: the points only
         lda #POWER_FIRE
         sta player_power
-        jsr queue_player_colors         ; the screen part (02)
+        jsr queue_player_colors         ; the screen part
         lda #PLAYER_TASK_FIRE_FLOWER
         bra @task
 @big:   lda #POWER_BIG
@@ -2760,7 +2658,7 @@ collect_powerup:
 ;     walks again, 400 points, moves away from the player;
 ;   below 9: flat or a shell (state 4), the stomp chain and its score (the
 ;     chain + the stomp timer), the stomp timer + 1, the revive time.
-; The enemy box lags one move behind the enemy (07 section 1).
+; The enemy box lags one move behind the enemy.
 ;
 ; In:       A8 I8; D = the enemy's record; its screen place (REL_ENEMY)
 ; Out:      as the rules say
@@ -2849,7 +2747,7 @@ player_hits_enemy:
 @hurt:  jmp hurt_player
 
 ; ---------------------------------------------------------------------------
-; stomp_check: the stomp or the hurt (07 section 9, step 8): a stomp when
+; stomp_check: the stomp or the hurt: a stomp when
 ; the player falls, or for kinds 7 and up when his Y + 12 is above the
 ; enemy's Y, or while the stomp timer runs (a stomp in this frame); else,
 ; unless he blinks, an enemy that moves away from him turns, then
@@ -2939,7 +2837,7 @@ force_player_hurt:
         sta timers+TIMER_INJURY
         lda #SQUARE1_PIPE_INJURY
         sta snd_square1_queue
-        jsr queue_player_colors         ; the screen part (02)
+        jsr queue_player_colors         ; the screen part
         lda #PLAYER_TASK_INJURY
         ldy #HURT_STATE
         bra set_player_routine
@@ -2962,7 +2860,7 @@ set_player_routine:
 .assert POWER_SMALL = 0, error, "force_player_hurt: stz sets the power"
 
 ; ---------------------------------------------------------------------------
-; enemy_stomped: what a stomp does (07 section 9, step 9), by the enemy's
+; enemy_stomped: what a stomp does, by the enemy's
 ; kind: a spiny hurts the player; else the stomp sound, then the flyers'
 ; group, a paratroopa, or a goomba, koopa or buzzy beetle (see
 ; player_hits_enemy).
@@ -3090,7 +2988,7 @@ turn_enemy_toward_player:
         rts
 
 ; ===========================================================================
-; The enemies against the enemies (07 section 10)
+; The enemies against the enemies
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -3218,19 +3116,19 @@ first_enemy_state:
 .endmacro
 
 ; ---------------------------------------------------------------------------
-; resolve_enemy_bump: two enemies touch (07 section 10).
+; resolve_enemy_bump: two enemies touch.
 ;   Either defeated: nothing.
 ;   The first in state 6 or more (a moving shell; not a hammer brother):
 ;     when the second is a moving shell too, the first is knocked out
 ;     (its score number is the knock-out's: the original's 1000 before it
-;     never shows, 07 leftover 3); the second is knocked out with the score
+;     never shows); the second is knocked out with the score
 ;     4 + the first's shell chain; the first's chain + 1.
 ;   Else the second in state 6 or more (not a hammer brother): the first is
 ;     knocked out with the score 4 + the second's chain; the second's chain
 ;     + 1.
 ;   Else both turn: the second, then the first.
 ; Every score number takes the screen X of the first enemy (the enemy
-; group's place: 07 leftover 5).
+; group's place).
 ;
 ; In:       A8 I8; D = the second enemy's record; bump_first = the first's
 ; Out:      as the rules say
@@ -3342,7 +3240,7 @@ negate_enemy_speed:
         rts
 
 ; ===========================================================================
-; The lifts and the player (07 section 11)
+; The lifts and the player
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
@@ -3427,7 +3325,7 @@ check_player_on_big_lift:
 ; column is off the screen; a box from Y $20 down is tested, a touch runs
 ; resolve_lift_hit with the pass (2, then 1) and ends the test; then the box
 ; moves 128 pixels down. After a touch in the second pass the box stays
-; moved: a fireball of the next frame tests it there (07 leftover 7).
+; moved: a fireball of the next frame tests it there.
 ;
 ; In:       A8 I8; D = the lift's record
 ; Out:      Object::on_lift, its box_corners, resolve_lift_hit

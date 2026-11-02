@@ -1,132 +1,59 @@
 ; The screen work of the game: the screen set-up tasks, the screen records
 ; of the frame, the palettes, the status bar, the screen texts, the area
-; columns, the block pictures and the blinking colours (document 02,
-; sections 11-20).
+; columns, the block pictures and the blinking colours .
 ;
 ; Place in the game. The title mode, the play mode and the game over mode
 ; run screen_routines as their task 1 (src/game/title.s, flow.s), once each
 ; frame, until the screen of the mode is set up. The record routines are
 ; called during play: draw_column_tiles and select_list_two by the area
-; builder (06), queue_block_metatile, blank_block_picture,
+; builder, queue_block_metatile, blank_block_picture,
 ; replace_block_picture and erase_coin_or_axe by the blocks, the coins and
-; the axe (07, 05a), store_block_tiles by the bridge (05b),
-; write_screen_text by the warp zone (06), queue_player_colors by the
-; entrance and the power-ups (04, 07), blink_block_colors by game_core.
-;
-; Data out: screen records (src/packet_layout.inc). The card draws the
-; picture; the game logic describes the changes of each frame. As the
-; original's write lists (02 section 11), each frame sends one source,
-; screen_source, which the frame's packet code sends after the logic:
-;   SOURCE_LIST_1 (0)  screen_list_1: colours, status bar digits, texts,
-;                      block pictures (the original's list 1)
-;   SOURCE_LIST_2 (6)  screen_list_2: the area columns and the coin or axe
-;                      erase (list 2); list 1 waits for a later frame
-;   the others         fixed lists of records, screen_rom_lists
-;                      (scripts/screen_data.py): the palettes 1-4 and 8-11,
-;                      the title 5, the castle messages $0C-$12 (the
-;                      original's numbers, 02 section 11.3), and the port's
-;                      two forms of the status bar's top line, $13 and $14;
-;                      list 1 is lost with them (02 L2)
-; The last choice in a frame counts. A record that the logic of frame N
-; queues shows in picture N + 1, as the original's write does.
-;
-; The original's lengths. Two room tests compare list 1's length in the
-; original's bytes: blink_block_colors (below BLINK_ROOM) and the balance
-; lift ropes (05b). The port's records have other lengths, so beside
-; screen_list_1_end (the port's bytes) each writer of list 1 adds its
-; record's length in the original's form to screen_list_1_original_end
-; (grow_list_1 does both), and whoever empties list 1 clears both.
-;
-; Merged and split. Text 0 (the status bar's top line with the palettes of
-; all of name table 0: 331 bytes as records) does not fit list 1: it is a
-; ROM list that draw_status_top chooses. The other texts are forms that the
-; builder makes; write_screen_text copies one with a block move. The
-; REC_COLUMN record carries the palettes of its squares, so
-; write_column_attributes has no records of its own and is select_list_two.
-; draw_mushroom_icon (01) and the world digit of the title's world select
-; are here with the other writers of list 1. clear_name_tables is the
-; frame's (src/game/frame.s), which queues the clear record itself.
-;
-; Hardware: none.
+; the axe, store_block_tiles by the bridge,
+; write_screen_text by the warp zone, queue_player_colors by the
+; entrance and the power-ups, blink_block_colors by game_core.
 ;
 ; Original routines: $8567-$874D (the screen tasks), $8808-$88AD
 ; (write_screen_text, end_screen_wait), $88AE-$89C2 (the column records),
 ; $89E1-$8A38 (blink_block_colors), $8A4D-$8B07 (the block pictures),
 ; $8325-$833F (draw_mushroom_icon), $82A9-$82B8 (the world digit).
 ;
-; Routines:
-;   screen_routines          the screen task of this frame ($8567)
-;   blank_screen_task        task 0: sprites hidden, name tables clear ($858B)
-;   setup_lives_colors       task 1: the player's colours on black ($859B)
-;   draw_status_top          task 2: the status bar's top line ($8652)
-;   draw_status_bottom       task 3: score, coins, world and level ($865A)
-;   show_time_up             task 4: TIME UP when the time ran out ($8693)
-;   end_screen_wait          tasks 5 and 7: the wait of a screen text ($889D)
-;   restart_screen_timer     the screen timer again, the next task ($88A5)
-;   show_lives_screen        task 6: the lives screen or GAME OVER ($86A8)
-;   print_and_start_timer    a text, the screen timer, the picture on ($86C7)
-;   build_column_sets        task 8: one column set of the area ($86E6)
-;   queue_area_palette       task 9: the palette of the area type ($85BF)
-;   queue_backdrop_color     task 10: a backdrop setting's palette ($85E3)
-;   queue_player_colors      the backdrop and the player's colours ($85F1)
-;   queue_colour_record      its record, from given colours
-;   queue_mushroom_palette   task 11: the mushroom ledges' palette ($8643)
-;   draw_title_logo          task 12: the title picture ($86FF)
-;   clear_lists_draw_marker  task 13: both lists empty, the marker ($8732)
-;   draw_top_score           task 14: the title's top score ($8749)
-;   write_screen_text        texts 1-6 into list 1 ($8808)
-;   copy_text_template       a text form into list 1
-;   write_lives_text         text 1 with its digits
-;   queue_one_cell           a record of one cell into list 1
-;   draw_world_digit         the title's world digit ($82A9)
-;   draw_mushroom_icon       the menu marker at 1 or 2 players ($8325)
-;   draw_column_tiles        a metatile column into list 2 ($88AE)
-;   select_list_two          list 2 is the source ($89BD; also $896A)
-;   blink_block_colors       each 8th frame, the blink colour ($89E1)
-;   queue_block_metatile     a metatile's picture at a block ($8A6D)
-;   store_block_tiles        a tile set at a square, list 1 ($8ACD)
-;   erase_coin_or_axe        the blank picture, list 2 ($8A4D)
-;   metatile_square          the square of a collision buffer cell
-;   square_place             a square's place as one word
-;   put_square               write a REC_SQUARE record
-;   grow_list_1              count a record of list 1 in both lengths
 
 
-; ---- Values of the original program (02 unless named) -------------------------
-TILE_DASH       = $28           ; the dash between the world and the level digits (02 section 15)
-TILE_CROWN      = $9F           ; before the lives digit from 10 lives on (02 section 16.1)
-TILE_MENU_MARKER = $CE          ; the title's menu marker (01 section 7.2)
+; ---- Values of the original program -------------------------
+TILE_DASH       = $28           ; the dash between the world and the level digits
+TILE_CROWN      = $9F           ; before the lives digit from 10 lives on
+TILE_MENU_MARKER = $CE          ; the title's menu marker
 STATUS_WORLD_ROW = 3            ; the status bar's world, dash and level: row 3 ($2073)
 STATUS_WORLD_COLUMN = 19        ;   columns 19-21
 STATUS_WORLD_TILES = 3
 STATUS_WORLD_ORIGINAL_SIZE = 6  ; the original's record: 3 head bytes, 3 tiles
-PLAYER_COLOURS_ENTRY = 16       ; $3F10: sprite palette 0, whose colour 0 is the backdrop entry 0 (02 section 14.3)
+PLAYER_COLOURS_ENTRY = 16       ; $3F10: sprite palette 0, whose colour 0 is the backdrop entry 0
 PLAYER_COLOURS  = 4             ; the record's colours: the backdrop, the player's three
 COLOUR_RECORD_ORIGINAL_SIZE = 7 ; the original's record: 3 head bytes, 4 colours
 PLAYER_COLOUR_GROUP = 3         ; player_colours: 3 colours for each of Mario, Luigi and fire
 MARIO_COLOURS   = 0 * PLAYER_COLOUR_GROUP
 LUIGI_COLOURS   = 1 * PLAYER_COLOUR_GROUP
 FIRE_COLOURS    = 2 * PLAYER_COLOUR_GROUP
-LIVES_SCREEN_BACKDROP = 2       ; backdrop_colours entry 2: black, the lives screen's backdrop (02 section 13 task 1)
-SCREEN_WAIT_STEPS = 7           ; screen_timer of TIME UP and the lives screen: 127-147 frames (02 section 13)
+LIVES_SCREEN_BACKDROP = 2       ; backdrop_colours entry 2: black, the lives screen's backdrop
+SCREEN_WAIT_STEPS = 7           ; screen_timer of TIME UP and the lives screen: 127-147 frames
 GAME_OVER_WAIT_STEPS = $12      ; screen_timer of GAME OVER: 358-378 frames
-AREA_STYLE_MUSHROOM = 1         ; area_style of the mushroom ledges (02 section 13 task 11)
-BACKDROP_FIRST_SETTING = 4      ; the backdrop settings are 4-7; 0 is none (02 section 14.3)
-TOP_SCORE_FIELDS = $FA          ; refresh_status_number's two fields: $A none, $F the top score (07 section 13)
-BLINK_FRAME_MASK = 7            ; the blink steps on each 8th frame (02 section 19.1)
+AREA_STYLE_MUSHROOM = 1         ; area_style of the mushroom ledges
+BACKDROP_FIRST_SETTING = 4      ; the backdrop settings are 4-7; 0 is none
+TOP_SCORE_FIELDS = $FA          ; refresh_status_number's two fields: $A none, $F the top score
+BLINK_FRAME_MASK = 7            ; the blink steps on each 8th frame
 BLINK_ROOM      = $31           ; the original's list 1 room limit of the blink record
 BLINK_COLOURS   = 4             ; the blink record's colours: background palette 3
 BLINK_ORIGINAL_SIZE = 7         ; the original's record: 3 head bytes, 4 colours
 BLINK_STEPS     = 6             ; the blink colours of blink_colour_steps: a cycle of 48 frames
-SQUARE_ORIGINAL_SIZE = 10       ; the original's block picture: 2 records of 2 tiles (02 section 18.2)
-WORLD_DIGIT_ORIGINAL_SIZE = 4   ; the original's world step list: one record of one tile (01 section 7.1)
-MENU_MARKER_ORIGINAL_SIZE = 7   ; the original's marker list: one record of 3 tiles down (01 section 7.2)
+SQUARE_ORIGINAL_SIZE = 10       ; the original's block picture: 2 records of 2 tiles
+WORLD_DIGIT_ORIGINAL_SIZE = 4   ; the original's world step list: one record of one tile
+MENU_MARKER_ORIGINAL_SIZE = 7   ; the original's marker list: one record of 3 tiles down
 MENU_MARKER_CELLS = 3           ; the marker column: rows 18, 19, 20
-WARP_TEXT_ORIGINAL_SIZE = $2C   ; the original's list 1 length after the warp zone text (02 section 16.1)
+WARP_TEXT_ORIGINAL_SIZE = $2C   ; the original's list 1 length after the warp zone text
 ROW_OFFSET_SHIFT = 3            ; a collision buffer row offset (16 a metatile row) / 8: two cell rows a metatile
 .assert RING_COLUMNS = 2 * 32, error, "scripts/screen_data.py numbers name table 1 as ring columns 32-63"
 
-; The sources that this file chooses (02 section 11.3: the original's
+; The sources that this file chooses (the original's
 ; numbers; $13 and $14 are the port's own).
 SOURCE_CAVE_PALETTE = 3         ; the underground palette: a black backdrop
 SOURCE_TITLE    = 5             ; the title picture (the original's list at $0300)
@@ -135,18 +62,18 @@ SOURCE_STATUS_TOP_MARIO = $13   ; text 0 with MARIO: the status bar's top line, 
 SOURCE_STATUS_TOP_LUIGI = $14   ; text 0 with LUIGI
 .assert (SOURCE_STATUS_TOP_LUIGI + 1) * ROM_LIST_ENTRY = SCREEN_ROM_LISTS_SIZE, lderror, "screen.s: screen_rom_lists (scripts/screen_data.py) ends with the two forms of text 0"
 
-; The metatiles that queue_block_metatile shows (02 section 18.1).
+; The metatiles that queue_block_metatile shows.
 METATILE_LINED_BRICK = $51      ; the brick with the light top line
 METATILE_LINED_BRICK_COINS = $58 ; the same picture: a brick that holds coins
 METATILE_BRICK  = $52
 METATILE_BRICK_COINS = $5D
-; The tile sets of block_square_tiles (02 section 18.1).
+; The tile sets of block_square_tiles.
 BLOCK_SET_LINED_BRICK = 0
 BLOCK_SET_BRICK = 1
 BLOCK_SET_EMPTY = 2             ; the empty block: any other metatile
 BLOCK_SET_WATER_BLANK = 4       ; four tiles of pen 2: a taken coin or axe in a water area
 
-; The screen texts (02 section 16.2). Text 0 is draw_status_top's ROM list;
+; The screen texts. Text 0 is draw_status_top's ROM list;
 ; write_screen_text writes texts 1-6.
 TEXT_LIVES      = 1
 TEXT_TIME_UP    = 2
@@ -159,7 +86,7 @@ TEMPLATE_GAME_OVER = 8          ; the same three forms
 TEMPLATE_WARP_ZONE = 14         ; + 2 x (warp_zone - 4)
 TEMPLATE_NAMED  = 2             ; from the form without the name to MARIO's, and on to LUIGI's
 .assert TEMPLATE_NAMED = 2, error, "screen.s: write_screen_text steps a form with two INX"
-; The lives screen's digits (02 section 16.1, step 3).
+; The lives screen's digits.
 LIVES_ROW       = 14
 LIVES_CROWN_COLUMN = 17
 LIVES_CROWN_CELLS = 2           ; the crown and the units: one record
@@ -198,7 +125,7 @@ COLOURS_DATA    = 3
 .segment "AREASTATE"
 colour_step:    .res 1          ; the blink step, 0 to BLINK_STEPS - 1: blink_block_colors only; each area start clears it
 column_sets:    .res 1          ; the column sets left at an area's start, 11 down to $FF: begin_area (flow.s) writes
-                                ; it, build_column_sets counts it (02 section 13 task 8)
+                                ; it, build_column_sets counts it
 .segment "GAMEPLAY"
 
 .a8
@@ -237,6 +164,23 @@ column_sets:    .res 1          ; the column sets left at an area's start, 11 do
 ; Time:     12 cycles, then the task
 ; Original: $8567-$858A
 ; ---------------------------------------------------------------------------
+; Data out: screen records (src/packet_layout.inc). The card draws the
+; picture; the game logic describes the changes of each frame. As the
+; original's write lists, each frame sends one source,
+; screen_source, which the next frame's packet code sends before its logic:
+;   SOURCE_LIST_1 (0)  screen_list_1: colours, status bar digits, texts,
+;                      block pictures (the original's list 1)
+;   SOURCE_LIST_2 (6)  screen_list_2: the area columns and the coin or axe
+;                      erase (list 2); list 1 waits for a later frame
+;   the others         fixed lists of records, screen_rom_lists
+;                      (scripts/screen_data.py): the palettes 1-4 and 8-11,
+;                      the title 5, the castle messages $0C-$12 (the
+;                      original's numbers), and the port's
+;                      two forms of the status bar's top line, $13 and $14;
+;                      list 1 is lost with them
+; The last choice in a frame counts. A record that the logic of frame N
+; queues shows in picture N + 1, as the original's write does.
+;
 screen_routines:
         lda screen_task
         asl a                           ; a word for each task
@@ -307,7 +251,7 @@ setup_lives_colors:
 ; the original the text replaces list 1 from its start, nothing is added to
 ; list 1 after it in this frame, and source 0 then sends just the text. The
 ; ROM list, which drops list 1, sends the same. The name is LUIGI only in a
-; two-player game with player 1 on the screen (02 section 16.1, step 4).
+; two-player game with player 1 on the screen.
 ;
 ; In:       two_players, player
 ; Out:      screen_source = SOURCE_STATUS_TOP_MARIO or _LUIGI; screen_task + 1
@@ -328,7 +272,7 @@ draw_status_top:
 
 ; ---------------------------------------------------------------------------
 ; draw_status_bottom: screen task 3. The coin and score records of the
-; player on the screen (pick_status_nybbles, 07), then the record of the
+; player on the screen (pick_status_nybbles), then the record of the
 ; world digit, the dash and the level digit on status bar row 3.
 ;
 ; In:       player_record: world, level (0-7, 0-3)
@@ -337,7 +281,7 @@ draw_status_top:
 ; Original: $865A-$8692
 ; ---------------------------------------------------------------------------
 draw_status_bottom:
-        jsr pick_status_nybbles         ; 07: the coins and the score of the player on the screen
+        jsr pick_status_nybbles ; the coins and the score of the player on the screen
         ldx screen_list_1_end
         lda #REC_CELLS
         sta screen_list_1 + RECORD_KIND,x
@@ -448,7 +392,7 @@ show_lives_screen:
         jsr write_screen_text
         inc mode_task                   ; wait_game_over (flow.s) from the next frame
         rts
-@lives: jsr draw_lives_screen_player    ; 11: the player's picture beside the lives
+@lives: jsr draw_lives_screen_player ; the player's picture beside the lives
         lda #TEXT_LIVES
 print_and_start_timer:
         jsr write_screen_text
@@ -467,7 +411,7 @@ print_and_start_timer:
 ; vertical blank; the frames of this task show the backdrop, and the port
 ; shows the same pictures.
 ;
-; In:       parser_task (06), column_sets
+; In:       parser_task, column_sets
 ; Out:      the set's records in screen_list_2; screen_source = SOURCE_LIST_2;
 ;           screen_off + 1; column_sets - 1; screen_task + 1 after the last
 ; Changes:  A, X, Y, D, the flags; what step_column_builder changes
@@ -475,7 +419,7 @@ print_and_start_timer:
 ; ---------------------------------------------------------------------------
 build_column_sets:
         inc screen_off                  ; the next picture off
-@step:  jsr step_column_builder         ; 06: one step of the area builder
+@step:  jsr step_column_builder ; one step of the area builder
         lda parser_task
         bne @step                       ; the set has steps left
         dec column_sets
@@ -506,14 +450,13 @@ queue_area_palette:
 ; queue_backdrop_color: screen task 10. An area with a backdrop setting
 ; (4-7) sends the setting's source (backdrop_sources: list 1 for setting 4,
 ; the snow palettes, the castle palette); then the player colour record
-; follows in list 1, and is lost with list 1 when the source is a ROM list
-; (02 section 14.4, item 4).
+; follows in list 1, and is lost with list 1 when the source is a ROM list.
 ;
 ; In:       backdrop (0, or 4-7)
 ; Out:      screen_source; screen_task + 1; queue_player_colors'
 ; Changes:  A, X, Y, the flags
 ; Original: $85E3-$85F0, falling into $85F1. The original reads its table
-;           at $85C7 + backdrop, 4 bytes before it (02 L10); backdrop is 0
+;           at $85C7 + backdrop, 4 bytes before it; backdrop is 0
 ;           (not read) or 4-7, so only the table is read, as here.
 ; ---------------------------------------------------------------------------
 queue_backdrop_color:
@@ -533,12 +476,12 @@ queue_backdrop_color:
 ; The backdrop: the backdrop setting's colour, or the area type's when the
 ; area has no setting (backdrop_colours: entries 0-3 the area types, 4-7
 ; the settings). The first colour of each group of the original's
-; player_palettes is never shown (02 L11): player_colours holds the other
+; player_palettes is never shown: player_colours holds the other
 ; three.
 ; queue_colour_record: the same record from the colours given.
 ;
-; Callers: screen task 10, setup_entry_and_timer (04), collect_powerup and
-; force_player_hurt (07); setup_lives_colors calls queue_colour_record.
+; Callers: screen task 10, setup_entry_and_timer, collect_powerup and
+; force_player_hurt; setup_lives_colors calls queue_colour_record.
 ;
 ; In:       backdrop, area_type, player, player_power
 ;           queue_colour_record: X8 = the backdrop colour (0-7), Y8 = the
@@ -606,7 +549,7 @@ queue_mushroom_palette:
 ; draw_title_logo: screen task 12. On the title the title picture goes in
 ; the next frame: the box and the logo, the copyright, the menu texts, TOP-
 ; and the palettes of the title's squares (SOURCE_TITLE, from the
-; original's list in the tile art, 01 section 4.1). In the other modes the
+; original's list in the tile art). In the other modes the
 ; mode moves on: its screen is ready.
 ;
 ; The original copies its title list from the tile art to $0300-$0439, over
@@ -639,7 +582,7 @@ draw_title_logo:
 ; the title the area builder builds world 1 area 1, a ground area of the
 ; tree style (its header bytes $50 $21, read from the program), so it makes
 ; no cannon or whirlpool record, and in world 1 area 1 no pipe starts a
-; piranha plant (06 section 4).
+; piranha plant.
 ;
 ; In:       nothing
 ; Out:      screen_list_1 and screen_list_2 empty, then the marker's records
@@ -657,7 +600,7 @@ clear_lists_draw_marker:
 
 ; ---------------------------------------------------------------------------
 ; draw_top_score: screen task 14, on the title only. The top score's record
-; (refresh_status_number with the top score field alone, 07: its first
+; (refresh_status_number with the top score field alone: its first
 ; digit blank when it is 0); then the title mode moves on.
 ;
 ; In:       nothing
@@ -667,7 +610,7 @@ clear_lists_draw_marker:
 ; ---------------------------------------------------------------------------
 draw_top_score:
         lda #TOP_SCORE_FIELDS
-        jsr refresh_status_number       ; 07
+        jsr refresh_status_number
         inc mode_task                   ; game_setup (flow.s) from the next frame
         rts
 
@@ -684,16 +627,16 @@ draw_top_score:
 ;   | 3    | GAME OVER: one player, MARIO, LUIGI    |                          |
 ;   | 4-6  | the warp zone of warp_zone 4-6         | the original's length    |
 ;
-; The name (02 section 16.1, step 4; 09 section 6.1): two players only; the
+; The name: two players only; the
 ; player on the screen, but for TIME UP outside the game over mode the
-; other player (02 L17, 09 Q1: lose_a_life has swapped the players when the
+; other player (lose_a_life has swapped the players when the
 ; other has lives; when he has none the text still names him).
 ;
 ; The original's length: texts 1-3 do not change screen_list_1_original_end,
-; 0 in every frame that writes them (02 L6); texts 4-6 set it to
+; 0 in every frame that writes them; texts 4-6 set it to
 ; WARP_TEXT_ORIGINAL_SIZE, and the records that list 1 held are lost.
 ;
-; Callers: show_time_up, show_lives_screen; warp_zone_lock (06) with
+; Callers: show_time_up, show_lives_screen; warp_zone_lock with
 ; warp_zone 4-6.
 ;
 ; In:       A8 = the text, 1-6; two_players, player, mode; for text 1 the
@@ -704,6 +647,16 @@ draw_top_score:
 ; Time:     about 100 cycles + 7 a byte of the form (11-100 bytes)
 ; Original: $8808-$889C
 ; ---------------------------------------------------------------------------
+; Merged and split. Text 0 (the status bar's top line with the palettes of
+; all of name table 0: 331 bytes as records) does not fit list 1: it is a
+; ROM list that draw_status_top chooses. The other texts are forms that the
+; builder makes; write_screen_text copies one with a block move. The
+; REC_COLUMN record carries the palettes of its squares, so
+; write_column_attributes has no records of its own and is select_list_two.
+; draw_mushroom_icon and the world digit of the title's world select
+; are here with the other writers of list 1. clear_name_tables is the
+; frame's (src/game/frame.s), which queues the clear record itself.
+;
 write_screen_text:
         cmp #TEXT_LIVES
         beq write_lives_text
@@ -771,10 +724,10 @@ copy_text_template:
 
 ; ---------------------------------------------------------------------------
 ; write_lives_text: text 1, the lives screen: its form, then the records of
-; its digits (02 section 16.1, step 3). The lives shown are the lives after
+; its digits. The lives shown are the lives after
 ; the one in play plus 1; from 10 on, the crown and the units. The
-; reduction by 10 is made once only, so 19 lives or more show letter tiles
-; (02 L18), as the original's 8-bit sums give.
+; reduction by 10 is made once only, so 19 lives or more show letter tiles,
+; as the original's 8-bit sums give.
 ;
 ; Why records after the form: the original stores the digits into its copy
 ; of the text; here the digit records come after the form's records, so
@@ -860,9 +813,8 @@ queue_one_cell:
 ; ---------------------------------------------------------------------------
 ; draw_world_digit: the status bar's world digit after the title's world
 ; select (title.s step_world_select): the digit of player_record's world,
-; at the place of the original's template (world_digit_place, 01 section
-; 7.1). The original copies its template over list 1 with list 1's length;
-; list 1 is empty in that frame (01 L5), so adding the record is the same.
+; at the place of the original's template (world_digit_place). The original copies its template over list 1 with list 1's length;
+; list 1 is empty in that frame, so adding the record is the same.
 ;
 ; In:       player_record: world
 ; Out:      the record at the end of list 1; both lengths of list 1 grown
@@ -891,7 +843,7 @@ draw_world_digit:
 ; mushroom_icon_writes) is the one-player form, three one-cell records, top
 ; first. For two players the first and the third tile change, as the
 ; original's code changes them ($0304, $0306). Like draw_world_digit, the
-; records are added to the empty list 1 (01 L5).
+; records are added to the empty list 1.
 ;
 ; Callers: title_menu (select), screen task 13.
 ;
@@ -933,17 +885,17 @@ draw_mushroom_icon:
 ; write_column_attributes. List 2 is the source of the frame.
 ;
 ; Why one record for the two cell columns: the original sends them in two
-; frames, but both are past the picture's right edge then (06 section 11:
-; the built columns run 128 pixels ahead), so the picture is the same.
+; frames, but both are past the picture's right edge then. The built columns
+; run 128 pixels ahead, so the picture is the same.
 ;
-; The area builder (06) calls it once for each metatile column, at the
+; The area builder calls it once for each metatile column, at the
 ; first of the column's two drawing steps, and calls select_list_two at
 ; the other drawing step and at the attribute step: list 2 is then the
 ; source in the same five frames of each set as in the original, and
-; list 1 waits in those frames as it does there (02 section 11.4).
+; list 1 waits in those frames as it does there.
 ;
 ; In:       A8 = the ring metatile column, 0-31 (the world's metatile column
-;           mod 32); column_metatiles (06): the 13 metatiles, row 0 first
+;           mod 32); column_metatiles: the 13 metatiles, row 0 first
 ; Out:      the record at the end of screen_list_2; screen_list_2_end grown;
 ;           screen_source = SOURCE_LIST_2
 ; Changes:  A, X, Y, the flags; A8 I8 at the exit
@@ -998,7 +950,7 @@ select_list_two:
 ; When the original's list 1 has no room (BLINK_ROOM, in its own bytes) no
 ; record is added and colour_step does not move. A blink record that the
 ; frame drops with list 1 (a ROM list chosen in this frame) is not seen,
-; and colour_step has moved (02 section 19.1).
+; and colour_step has moved.
 ;
 ; Called by game_core (flow.s) in each frame of play and of the title.
 ;
@@ -1009,7 +961,7 @@ select_list_two:
 ; Keeps:    D
 ; Time:     12 cycles; about 150 in a blink frame
 ; Original: $89E1-$8A38. The original starts its copy with Y = A = 0 from
-;           the frame test (02 L9); the port writes the fields directly.
+;           the frame test; the port writes the fields directly.
 ; ---------------------------------------------------------------------------
 blink_block_colors:
         lda frame_count
@@ -1057,14 +1009,13 @@ blink_block_colors:
 ; blank_block_picture: the same with metatile 0: a block that the player
 ; bumps or breaks (the block object shows it while it moves).
 ; replace_block_picture: the same. The original also raises block_residual,
-; which nothing reads (02 L16), and lowers the block's block_replace, which
-; its only caller sets to 0 right after (replace_bumped_metatile, 05a
-; section 17.12): the port does neither.
+; which nothing reads, and lowers the block's block_replace, which
+; its only caller sets to 0 right after (replace_bumped_metatile): the port does neither.
 ;
 ; The cell: X = its ring metatile column (0-31: the collision buffer's
 ; column, + 16 in the second buffer, which is name table 1), Y = its row
-; offset in the buffer (16 a row: $00-$C0), as the tile probe of 07 gives
-; them. Callers: bump_block_from_below, replace_bumped_metatile (07, 05a).
+; offset in the buffer (16 a row: $00-$C0), as the tile probe of collision code gives
+; them. Callers: bump_block_from_below, replace_bumped_metatile.
 ;
 ; In:       A8 = the metatile; X8, Y8 = the cell
 ; Out:      the REC_SQUARE record at the end of screen_list_1; both lengths
@@ -1102,7 +1053,7 @@ queue_block_metatile:
 
 ; ---------------------------------------------------------------------------
 ; store_block_tiles: tile set A at a square, at the end of list 1. The
-; bridge (bridge_collapse_task, 05b) takes a piece away with
+; bridge (bridge_collapse_task) takes a piece away with
 ; BLOCK_SET_BLANK. The original's grow_list_ten_bytes is part of it.
 ;
 ; In:       A8 = the tile set (BLOCK_SET_*, 0-4); X8 = the square's cell row
@@ -1137,14 +1088,13 @@ store_block_tiles:
 ; ---------------------------------------------------------------------------
 ; erase_coin_or_axe: a taken coin or the touched axe leaves the picture: the
 ; blank tile set at the cell, as the whole of list 2, which is the frame's
-; source. In a water area the blank is pen 2, the water's colour (02
-; section 18.1).
+; source. In a water area the blank is pen 2, the water's colour.
 ;
 ; Why the whole list: the original writes its two records at the start of
 ; list 2 and does not change list 2's length. List 2 is empty in that
 ; frame's logic (the frame's send emptied it), so its records are the whole
 ; list; update_scroll_vars sees list 2 chosen and adds no column in the same
-; frame (02 L7).
+; frame.
 ;
 ; In:       X8 = the ring metatile column (0-31), Y8 = the row offset
 ;           ($00-$C0), as queue_block_metatile; area_type
@@ -1153,8 +1103,8 @@ store_block_tiles:
 ; Changes:  A, X, Y, the flags; A8 I8 at the exit
 ; Keeps:    D
 ; Time:     about 130 cycles
-; Original: $8A4D-$8A60. The original returns X = area_type (02 L7); its
-;           callers load X again (05a section 17.9).
+; Original: $8A4D-$8A60. The original returns X = area_type; its
+;           callers load X again.
 ; ---------------------------------------------------------------------------
 erase_coin_or_axe:
         jsr metatile_square
@@ -1276,6 +1226,13 @@ put_square:
 ; Original: the length stores of the list 1 writers ($863F set_list_end and
 ;           the others)
 ; ---------------------------------------------------------------------------
+; The original's lengths. Two room tests compare list 1's length in the
+; original's bytes: blink_block_colors (below BLINK_ROOM) and the balance
+; lift ropes. The port's records have other lengths, so beside
+; screen_list_1_end (the port's bytes) each writer of list 1 adds its
+; record's length in the original's form to screen_list_1_original_end
+; (grow_list_1 does both), and whoever empties list 1 clears both.
+;
 grow_list_1:
 .a8
 .i8

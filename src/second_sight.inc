@@ -1,9 +1,7 @@
 ; The IIgs side of the Second Sight card in slot 3: its host registers, the
 ; firmware commands that the boot loader and the options menu send, and the
-; VGA registers that they set through the firmware. Source: the Second
-; Sight reference, docs/09-host-protocol.md and
-; docs/reference/host-commands.md. src/game.s and src/boot.s include this
-; file.
+; VGA registers that they set through the firmware. src/game.s and
+; src/boot.s include this file.
 ;
 ; Each access to $C0B0-$C0B7, a read or a write, raises an event on the
 ; card: the Z180's INT1, which is also the DMA request of its DMA channel 1.
@@ -18,7 +16,7 @@ SS_BURST        = $E0C0B7       ; top of $C0B0-$C0B7: each write there is one pa
 SS_BURST_SIZE   = 8             ; the bytes of $C0B0-$C0B7: one burst of pushes
 SS_HANDSHAKE    = $E0C0B8       ; read: the handshake byte of the card (no event)
 
-; Firmware commands (host-commands.md, command table)
+; Firmware commands
 SS_GET_STATUS   = $00           ; 13 reads: one dummy, then SS_STATUS_SIZE bytes
 SS_SET_MODE     = $01           ; mode, SS_EMULATION or SS_NATIVE; completion SS_DONE or SS_MODE_FAILED
 SS_UPLOAD_DATA  = $02           ; SS_UPLOAD_PARAMETERS bytes, then the data
@@ -27,7 +25,7 @@ SS_RUN_CODE     = $09           ; CBR, CBAR, BBR, address (2); no completion
 SS_SET_SHADOW   = $0B           ; SS_SHADOW_ALL or SS_SHADOW_NONE
 SS_SET_VGA_REG  = $0C           ; SS_VGA_REG_PARAMETERS bytes
 
-; Handshake values (host-commands.md, handshake values)
+; Handshake values
 SS_PHASE_DONE   = $00           ; the phase is finished
 SS_READY        = $01           ; the card waits for bytes, or has bytes to read
 SS_DONE         = $A5           ; SetMode finished
@@ -43,7 +41,7 @@ SS_SENSE        = 10            ; the card's input status 0 ($3C2): the monitor 
 .assert SS_SIGNATURE+SS_SIGNATURE_SIZE = SS_STATUS_COUNT, error
 
 ; SetMode
-SS_MODE_TEXT40  = $FC           ; 40 x 24 text: the firmware has it for both monitors (reference/video-modes.md)
+SS_MODE_TEXT40  = $FC           ; 40 x 24 text: the firmware has it for both monitors
 SS_EMULATION    = 0             ; the firmware draws the Apple screen
 SS_NATIVE       = 1             ; native VGA mode: the firmware draws nothing
 
@@ -54,7 +52,6 @@ SS_SHADOW_NONE  = $04           ; stop all copies
 ; UploadData: flag, destination (3), length (3), IIgs source (3, ignored)
 SS_UPLOAD_PARAMETERS = 10
 SS_UPLOAD_LINEAR = 1            ; flag: a 24-bit card offset: $000000-$07FFFF video RAM, $100000-$11FFFF SRAM
-                                ; (09-host-protocol.md, "UploadData destinations", "Loading Z180 code")
 
 ; SetVGAReg: index port (2), index, data port (2), value
 SS_VGA_REG_PARAMETERS = 6

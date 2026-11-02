@@ -1,56 +1,11 @@
-; The game clock: the DOC timer oscillator interrupts four times in each
-; picture of the card's video mode, and the main loop runs one frame of the
-; original at each fourth tick (frames_due). The game therefore runs at the
-; picture rate of the mode (src/secondsight/mode.s), which is near the rate
-; of the original, the NTSC NES rate 1,789,773 / 29,780.5 =
-; 60.0988 Hz: 60.0588 Hz on VGA, 60.173 Hz on AppleColor RGB. The sound unit
-; model (src/sound.s) steps its envelopes at each tick, four times in each
-; frame, as the NES does. The startup reads the monitor from the firmware's
-; status (the sense byte): the card sets the mode of that monitor.
+; The game clock uses a timer in the IIgs Direct Oscillator Chip (DOC),
+; the Ensoniq 5503 sound chip. Its interrupt runs four times per picture;
+; every fourth tick adds a frame to frames_due for the main loop in game.s.
+; The same ticks advance the sound model and sample input.
 ;
-; The timer is the last enabled oscillator (CLOCK_VOICE): it plays a silent
-; page of DOC RAM in free-run mode with its interrupt on. Each pass through
-; the 256-byte page is one tick. The DOC steps each enabled oscillator once
-; in each scan of DOC_SLOTS slots, DOC_SLOT_RATE / DOC_SLOTS scans a second,
-; and a table at resolution 0 plays F / 2^17 passes in each scan (Apple
-; IIgs Hardware Reference, chapter 5, p. 113: the output frequency is
-; SR x F / 2^(17 + resolution), with the scan rate SR = 894,886 Hz / (the
-; enabled oscillators + 2)). So F = 2^17 x 4 x the picture rate x DOC_SLOTS
-; / DOC_SLOT_RATE. F is not a whole number: the tick adds the fraction each
-; time and uses F + 1 when it carries, so the average is exact.
-;
-; The computed rate is not the card's real rate: each output of the card's
-; clock chip can be 0.5% off its listed frequency, and its crystal is not
-; the IIgs's (Second Sight reference, docs/14-custom-code.md, "Game
-; timing"). At 60 Hz, 0.5% would slip a frame every 3.3 s: a picture shown
-; twice, or a frame never shown. So the card measures where each packet
-; comes against its vertical retrace and sends the phase back in its token
-; (src/secondsight/picture.s), and clock_phase moves F to hold each packet a
-; little before the retrace. The game never waits for the card.
-;
-; Data in: the sense byte (clock_start), the card's token (clock_phase).
-; Data out: frames_due (src/game.s main_loop counts it down), the ticks of
-; input_tick and sound_tick.
-;
-; Hardware rules:
-;   - The DOC keeps no register of a disabled oscillator: they are not
-;     refreshed (Ensoniq 5503 data sheet, the oscillator enable register).
-;     So the oscillators go on first, then their registers.
-;   - The sound GLU: wait while SOUNDCTL shows busy before each access; a
-;     read of SOUNDDATA returns the byte that the access before fetched and
-;     starts the next fetch (Apple IIgs Hardware Reference, pp. 104-107).
-;   - A read of DOC_IRQ acknowledges the oscillator that it reports; while
-;     another interrupt waits, the DOC keeps the IRQ line low (Ensoniq 5503
-;     data sheet, the interrupt register).
-;   - The native-mode IRQ vector is at $FFEE; with SHADOW_IOLC set,
-;     $C000-$FFFF of bank 0 is RAM, so the vector is RAM that clock_start
-;     writes (Hardware Reference, the shadow register).
-;
-; Routines:
-;   clock_start   the timer and its interrupt (JSR, from the startup)
-;   clock_phase   move F by the phase of the last packet (JSR, src/packet.s)
-;   clock_irq     the interrupt (the IRQ vector)
-;   doc_write     one DOC register write
+; The card's selected video mode sets the nominal rate: about 59.940 Hz for
+; VGA and 60.055 Hz for AppleColor RGB, close to the original game's 60.0988
+; Hz. clock_phase uses the card's packet timing to keep the host in step.
 
 .a8
 .i16
@@ -64,6 +19,18 @@ DOC_SLOT_RATE = 894886          ; the oscillator slots a second: 7,159,090 Hz / 
 DOC_SLOTS = DOC_VOICES + 2      ; the slots of one scan: the enabled oscillators and two more
 TICKS_PER_FRAME = 4
 
+; The timer is the last enabled oscillator (CLOCK_VOICE): it plays a silent
+; page of DOC RAM in free-run mode with its interrupt on. Each pass through
+; the 256-byte page is one tick. The DOC steps each enabled oscillator once
+; in each scan of DOC_SLOTS slots, DOC_SLOT_RATE / DOC_SLOTS scans a second,
+; and a table at resolution 0 plays F / 2^17 passes in each scan. F is the
+; oscillator's frequency register (Apple
+; IIgs Hardware Reference, chapter 5, p. 113: the output frequency is
+; SR x F / 2^(17 + resolution), with the scan rate SR = 894,886 Hz / (the
+; enabled oscillators + 2)). So F = 2^17 x 4 x the picture rate x DOC_SLOTS
+; / DOC_SLOT_RATE. F is not a whole number: the tick adds the fraction each
+; time and uses F + 1 when it carries, so the average is exact.
+;
 ; doc_rate PICTURE, INTEGER, FRACTION: INTEGER and FRACTION (1/65536) of F
 ; for TICKS_PER_FRAME ticks in each picture of PICTURE clock periods at the
 ; mode's clock. F x 65536 = 2^17 x 4 x 65536 x DOC_SLOTS x the clock /
@@ -92,6 +59,15 @@ TICKS_PER_FRAME = 4
 .assert TICKS_PER_FRAME = 4, error      ; doc_rate: the 4 of 2^35 = 2^17 x 4 x 65536
         doc_rate secondsight_MODE_VGA_PICTURE, CLOCK_VGA, CLOCK_VGA_FRACTION
         doc_rate secondsight_MODE_RGB_PICTURE, CLOCK_RGB, CLOCK_RGB_FRACTION
+; The computed rate is not the card's real rate: each output of the card's
+; clock chip can be 0.5% off its listed frequency, and its crystal is not
+; the IIgs's. At 60 Hz, 0.5% would slip a frame every 3.3 s: a picture shown
+; twice, or a frame never shown. So the card measures where each packet
+; comes against its vertical retrace and sends the phase back in its token
+; (src/secondsight/picture.s), and clock_phase moves F to hold each packet a
+; little before the retrace. A full packet queue can make the host wait
+; for the card (packet_flush, src/packet.s).
+;
 ; The phase loop (clock_phase): each packet's phase from the card, in units
 ; of 142 us (secondsight_PHASE_UNIT_STEPS), less PHASE_TARGET, is the error.
 ; F = the computed F + (PHASE_GAIN x the error + the sum of the errors) x
@@ -125,6 +101,14 @@ doc_master: .res 1              ; the owner's master volume (SOUNDCTL_VOLUME bit
                                 ; sound_start reads it from CP_VOLUME at the start; never changed
 
 .segment "NATIVE"
+
+; The DOC keeps no register of a disabled oscillator: they are not
+; refreshed (Ensoniq 5503 data sheet, the oscillator enable register).
+; So the oscillators go on first, then their registers.
+; The native-mode IRQ vector is at $FFEE; with SHADOW_IOLC set,
+; $C000-$FFFF of bank 0 is RAM, so the vector is RAM that clock_start
+; writes (Hardware Reference, the shadow register).
+;
 
 ; ---------------------------------------------------------------------------
 ; clock_start: the timer oscillator and its interrupt, at the rate of the
@@ -330,6 +314,10 @@ clock_phase:
         rts
 .assert PHASE_GAIN = 8, error           ; clock_phase: three shifts
 
+; A read of DOC_IRQ acknowledges the oscillator that it reports; while
+; another interrupt waits, the DOC keeps the IRQ line low (Ensoniq 5503
+; data sheet, the interrupt register).
+
 ; ---------------------------------------------------------------------------
 ; clock_irq: the IRQ. A timer tick sets the frequency of its next pass,
 ; runs the input tick and the sound tick (src/input.s, src/sound.s), and
@@ -469,6 +457,11 @@ clock_irq:
 .assert ^clock_irq = 0, error           ; the IRQ vector holds a bank-0 address
 .assert KM_MOUSE_FULL >> 1 = KM_MOUSE_IRQ .and KM_DATA_FULL >> 1 = KM_DATA_IRQ, error ; the LSR
 .assert SOUNDCTL_BUSY = $80 .and DOC_FREQ_LOW = 0, error ; the BMIs; oscillator 0's register
+
+; The sound GLU, the interface between the CPU and DOC, uses SOUNDCTL's
+; busy bit. Wait for it to clear before each access; a
+; read of SOUNDDATA returns the byte that the access before fetched and
+; starts the next fetch (Apple IIgs Hardware Reference, pp. 104-107).
 
 ; ---------------------------------------------------------------------------
 ; doc_write: write A to the DOC register X, with the interrupts off: the

@@ -31,19 +31,6 @@
 ; (two channels that play together are a little quieter on the NES than
 ; each alone). A NES game that needs one of them adds it here.
 ;
-; Routines:
-;   sound_start        the DOC voices, the waves and the noise (JSL, startup)
-;   sound_set_mix      the music and effects levels of the options menu (JSL)
-;   sound_tick         one tick of the sound unit, played on the DOC (JSL, clock_irq)
-;   apu_sweep_x        the call apu_sweep: a square's sweep (src/sound.inc)
-;   apu_period_x       the call apu_period: a square's or the triangle's period
-;   apu_length_x       the call apu_length: a length load
-;   apu_enable_bits    the call apu_enable: the channel enable bits
-;   apu_sequence_start the call apu_sequence: the frame sequencer's mode and start
-;   apu_set_effects    the channels that play an effect (src/game/sound_program.s)
-;   sound_hold         the options menu: the voices silent, the sound unit stopped (JSL)
-;   sound_release      after the menu: the sound unit goes on where it stopped (JSL)
-
 TICK_CYCLES = 7445              ; NES CPU cycles in one tick: 29,780.5 / 4
 PULSE_RESOLUTION = 0            ; the DOC resolution of the squares' tables
 TRIANGLE_RESOLUTION = 1         ; of the triangle's (its pitch is half a square's)

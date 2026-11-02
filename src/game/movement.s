@@ -1,6 +1,5 @@
 ; The shared moves of the objects, the enemy slot loop, the enemy spawns and
-; the start of each enemy kind (document 05a sections 3 and 18-22; the
-; original's $BF02-$C8D6).
+; the start of each enemy kind (the original's $BF02-$C8D6).
 ;
 ; The moves: every object of the game moves by the same two routines. The
 ; X position is 24 bits (Object::x_fraction, then the word x_pos: the page
@@ -12,25 +11,25 @@
 ; The fall routines give each kind its pull and its top speed. They run in
 ; 16-bit adds where the original makes two or three 8-bit adds with their
 ; carries; the bits are the same (each routine says where). The player
-; (document 04), the enemies (05b) and the objects (objects.s) call them.
+; (player.s), the enemies (enemies.s) and the objects (objects.s) call them.
 ;
-; The enemy slot loop: game_core (03) runs enemies_and_loops for each of
+; The enemy slot loop: game_core runs enemies_and_loops for each of
 ; the six enemy slots once each frame (the victory mode for slot 0 only),
-; then score_numbers (07) for the same slot. An active slot runs its kind's
-; routine (run_enemy_slot: the routines of 05b and objects.s); a free slot
+; then score_numbers for the same slot. An active slot runs its kind's
+; routine (run_enemy_slot: the routines in enemies.s and objects.s); a free slot
 ; reads the next spawn record of the area (read_enemy_spawns): the castle
 ; maze loop check, a queued wave, an enemy of the list, an area link, or
 ; the next enemy of a running wave. The enemy lists are converted at build
 ; time by the levels part (scripts/area_data.py, src/game/area.s) into
-; spawn records with their pages resolved (06 section 12, 05a L33); this
+; spawn records with their pages resolved; this
 ; file applies the reading rules that depend on the frame: the screen
 ; edges, the free slots, slot 5's filter, hard mode, the waits.
 ;
 ; The start of each kind (route_enemy_start, from the spawns, the groups
-; and the waves): the start values of 05a section 21, into the enemy's
-; record. A kind's own values live in the union fields of Object (05a
-; section 2.3, state.inc), so a started enemy keeps every field that its
-; start does not write, as in the original (05a section 2.4, L14).
+; and the waves): the start values, into the enemy's
+; record. A kind's own values live in the union fields of Object (state.inc),
+; so a started enemy keeps every field that its
+; start does not write, as in the original.
 ;
 ; Registers: A8 I8 at each entry and exit unless a header says otherwise.
 ; DBR = bank 0. D = the record of the object that a routine works on
@@ -40,75 +39,13 @@
 ; The dispatch tables (enemy_starts, wave_starts, enemy_runs) are in this
 ; bank: JMP (table,X) reads its address from the program bank.
 ;
-; Merged and split against the original:
-; - move_enemy_sideways and move_object_sideways are one routine: the
-;   original's move_enemy_sideways only turned the enemy number into the
-;   object slot, and D is the record here.
-; - apply_gravity has two entries: apply_gravity (the down pull only, the
-;   original's A = 0) and apply_gravity_up (the down and the up pull, A not
-;   0). apply_vertical_move is apply_gravity under its own name.
-; - The original's shared tails of the fall routines (set_top_speed_three,
-;   drop_object_max_a, red_paratroopa_move, red_paratroopa_gravity) are
-;   gone: each fall routine loads its pull and its top speed.
-; - The loop check (check_loop) is its own routine; the original keeps it
-;   at the start of read_enemy_spawns.
-; - The list stepping (step_enemy_list, step_list_two, step_list_three) is
-;   one step to the next spawn record (step_spawn_record): the records have
-;   no byte lengths and the build resolved the page flag.
-; - The start routines share their tails by the job (the box, the speed,
-;   the facing); a store that a later step of the same start replaces is
-;   not made (no_wave_code, start_nothing_last, store_enemy_speed,
-;   tall_box_return, store_box_return, big_lift_box_kind are gone).
-; - place_at_right_edge and finish_flame_start are one routine.
-;
-; Routines:
-;   move_player_sideways     the player's sideways move, unless the spring holds him ($BF09)
-;   move_object_sideways     X += the X speed x 16 (also move_enemy_sideways) ($BF0F, $BF02)
-;   apply_gravity            the Y move by the speed, then the down pull and its limit ($BFD7)
-;   apply_gravity_up         apply_gravity, then the up pull and its limit ($BFD7)
-;   move_player_up_down      the player's fall ($BF4D)
-;   drop_enemy_fast          a falling enemy; a spiny egg falls slower ($BF63)
-;   drop_falling_lift        a falling lift ($BF6B)
-;   red_paratroopa_down      a red paratroopa's way down ($BF70)
-;   red_paratroopa_up        a red paratroopa's way up ($BF75)
-;   move_drop_lift           a drop lift ($BF88)
-;   move_enemy_slowly        a slow fall: blooper, swimming cheep-cheep, Bowser ($BF8C)
-;   move_leaper_vertically   a leaper: lava ball, leaping paratroopa, bullet bill ($BF92)
-;   apply_vertical_move      apply_gravity for the flying cheep-cheep ($BF96)
-;   drop_block_object        a bumped block or a brick piece ($BFA4)
-;   lower_lift               a lift on its way down ($BFB4)
-;   raise_lift               a lift on its way up ($BFB7)
-;   enemies_and_loops        one enemy slot of the frame ($C047)
-;   check_loop               the loop check of a castle maze ($C0CC-$C12E)
-;   send_player_back         a missed loop: the player and the lists 4 pages back ($C08C)
-;   read_enemy_spawns        a free slot takes the next spawn record ($C0CC)
-;   step_spawn_record        the list goes on with the next record ($C250-$C26B)
-;   take_queued_enemy        a free slot takes the wave's next enemy or the second vine ($C216)
-;   start_enemy_object       state 0, then the start of the kind ($C226)
-;   route_enemy_start        the start of the slot's kind ($C26C)
-;   start_*                  the start routines of the kinds ($C2F0-$C881)
-;   clear_enemy_vspeed       the Y speed 0 ($C363)
-;   begin_wave               a wave kind: the wave runs ($C7A0)
-;   stop_waves               the waves stop; Lakitu leaves ($C7B8)
-;   run_cloud_rider_wave     Lakitu comes back, or throws a spiny egg ($C3A4)
-;   start_flying_fish        a flying cheep-cheep of the wave ($C4A8)
-;   start_bowser_flame       a flame from Bowser's mouth or from the edge ($C5A3)
-;   place_at_right_edge      an enemy 32 pixels past the screen's right edge ($C5D8, $C61F)
-;   start_firework           a firework burst over the castle ($C63D)
-;   start_bullet_fish_wave   a bullet bill or a swimming cheep-cheep of the wave ($C69C)
-;   pick_unused_row          the wave's enemy takes a row that the wave has not used ($C6D6)
-;   copy_enemy_to_free_slot  the second half of Bowser or of a long fire bar ($C575)
-;   start_enemy_group        the two or three enemies of a group ($C71B)
-;   offset_lift_x            a lift's X by an offset ($C871)
-;   run_enemy_slot           the routine of the slot's kind each frame ($C882)
-;   run_nothing              the routine of the kinds that do nothing each frame ($C8D6)
 
 .a8
 .i8
 
-; ---- Values of the original program (05a unless named) -------------------
-STATE_LAKITU_LEAVES = 1          ; the state of a Lakitu that leaves (05b)
-; The spawn records of the levels part (06; see read_enemy_spawns).
+; ---- Values of the original program -------------------
+STATE_LAKITU_LEAVES = 1          ; the state of a Lakitu that leaves
+; The spawn records of the levels part (see read_enemy_spawns).
 ; The enemy slot that a value names: the enemy number e = slot - SLOT_ENEMY,
 ; 0-5 (vine_slots, duplicate_slot, bowser_front_slot, balance_side,
 ; Object::hammer_owner and the second half's Object::active $80 + e hold
@@ -116,10 +53,10 @@ STATE_LAKITU_LEAVES = 1          ; the state of a Lakitu that leaves (05b)
 
 ; ---- Values of this file ---------------------------------------------------
 BYTE_SIGN       = $80           ; the sign bit of a byte: (b xor $80) - $80 extends it to a word
-FRACTION_HALF   = $0080         ; a Y speed word: its fraction is 1/2 or more (05a 3.3)
+FRACTION_HALF   = $0080         ; a Y speed word: its fraction is 1/2 or more
 FRACTION_ALL    = $00FF         ; a Y speed word: the fraction 255/256
 ; The pull (1/256 pixel each frame) and the top speed (whole pixels) of
-; each fall routine (05a 3.4).
+; each fall routine.
 PLAYER_TOP_SPEED = 4            ; move_player_up_down
 FAST_DROP_PULL  = $3D           ; drop_enemy_fast
 SPINY_EGG_PULL  = $20           ;   for a spiny egg
@@ -136,22 +73,22 @@ SLOW_TOP        = 2
 LEAPER_PULL     = $1C           ; move_leaper_vertically
 LEAPER_TOP      = 3
 BLOCK_PULL      = $50           ; drop_block_object (its top speed: block_fall_limit)
-LIFT_PULL_DOWN  = 5             ; lower_lift, raise_lift: the kind $29 rule never applies (05a L16)
+LIFT_PULL_DOWN  = 5             ; lower_lift, raise_lift: the kind $29 rule never applies
 LIFT_PULL_UP    = 10
 LIFT_TOP        = 3
-; The enemy slot loop and the spawns (05a 18-20).
+; The enemy slot loop and the spawns.
 ONE_VINE        = 1             ; vine_count: one vine grows (take_queued_enemy then starts the second)
-PARSER_STEP     = 7             ; parser_task AND this: the step of the column builder's round (06)
-PARSER_BUILT    = 7             ;   this step: the builder built a column in the frame before (05a 18.1)
+PARSER_STEP     = 7             ; parser_task AND this: the step of the column builder's round
+PARSER_BUILT    = 7             ;   this step: the builder built a column in the frame before
 LOOP_CHECKS     = 11            ; the castle maze loop checks (loop_worlds, loop_pages, loop_heights)
-LOOP_GROUP      = 3             ; world 7 counts its checks in groups of three (05a 19.2)
-LOOP_BACK       = $0400         ; a missed loop: 4 pages back (05a 19.4)
-SPAWN_AHEAD     = $30           ; an entry starts 48 pixels past the screen's right edge (05a 20.2)
+LOOP_GROUP      = 3             ; world 7 counts its checks in groups of three
+LOOP_BACK       = $0400         ; a missed loop: 4 pages back
+SPAWN_AHEAD     = $30           ; an entry starts 48 pixels past the screen's right edge
 COLUMN_MASK     = $FFF0         ; a world X word: its 16-pixel column
-ENEMY_Y_DROP    = 8             ; the kinds below KIND_BOWSER_FLAME start 8 pixels lower (05a 21.1)
-NEW_ENEMY_MASK  = 1             ; Object::offscreen at a start: no box tests until the first box (07)
+ENEMY_Y_DROP    = 8             ; the kinds below KIND_BOWSER_FLAME start 8 pixels lower
+NEW_ENEMY_MASK  = 1             ; Object::offscreen at a start: no box tests until the first box
 START_KINDS     = $37           ; the kinds of enemy_starts: $00-$36
-; The start values (05a 21.2-21.13).
+; The start values.
 RED_KOOPA_STATE = 1             ; a red koopa starts in state 1
 LAVA_START      = $0202         ; a lava ball: Y high 2 (below the picture), Y 2
 LAVA_WAIT       = 1             ;   its slow timer
@@ -170,10 +107,10 @@ LIFT_RIGHT      = 0             ; offset_lift_x entries: +8 (lift_offsets),
 LIFT_MIDDLE     = 1             ;   +12,
 LIFT_LEFT       = 2             ;   -8
 FIRE_BAR_MOVE   = 4             ; a fire bar's centre: 4 pixels right and down
-BOWSER_FIRST_WAIT = $DF         ; bowser_breath_timer; also his first direction (05a L32, 05b L5)
+BOWSER_FIRST_WAIT = $DF         ; bowser_breath_timer; also his first direction
 BOWSER_START_HITS = 5
 BOWSER_START_SPEED = 2
-; The waves (05a 21.4-21.9).
+; The waves.
 CLOUD_RIDER_GAP = $80           ; frenzy timer: frames between two spiny eggs
 LAKITU_ROUNDS   = 7             ; rounds of CLOUD_RIDER_GAP without Lakitu before he comes back
 LAKITU_LOW_LIMIT = $2C          ; no egg while the player's Y is above this
@@ -188,7 +125,7 @@ FISH_MOVING     = 4             ; the player's speed class: moving (flying_fish_
 FISH_FAST       = $19           ; the player's X speed byte from this on (unsigned): the fast class
 FISH_START_Y    = $01F8         ; Y high 1, Y $F8: below the picture
 FLAME_TARGET_ABOVE = 0          ; bowser_flame_y_force entry 0: the target height is above the flame
-FLAME_BACK      = $0E           ; a flame starts this left of Bowser's X (8 bits: 05a L7)
+FLAME_BACK      = $0E           ; a flame starts this left of Bowser's X (8 bits)
 FLAME_DROP      = 8             ; and 8 pixels below his Y
 FLAME_GAP       = $20           ; frenzy timer: next_flame_gap + this,
 FLAME_GAP_HARD  = $10           ;   minus this with hard_mode_2
@@ -212,18 +149,18 @@ GROUP_HIGH      = 2             ; bit of the group number: the high row
 gravity_pull:   .res 2          ; apply_gravity: the down pull of this call, as a word
 gravity_top:    .res 2          ; apply_gravity: the top speed x 256 (also read by apply_gravity_up)
 spawn_limit:    .res 2          ; read_enemy_spawns: the 16-pixel column 48 pixels past the right edge
-fish_random:    .res 1          ; start_flying_fish: random + e AND 3 (05a 21.5 t1)
-fish_start:     .res 1          ; start_flying_fish: the X start entry of a still player (05a 21.5 t0)
+fish_random:    .res 1          ; start_flying_fish: random + e AND 3
+fish_start:     .res 1          ; start_flying_fish: the X start entry of a still player
 group_kind:     .res 1          ; start_enemy_group: the kind of the members
 group_y:        .res 1          ; start_enemy_group: the members' Y
 group_x:        .res 2          ; start_enemy_group: the next member's world X
 .segment "GAMEPLAY"
 
 ; ---------------------------------------------------------------------------
-; move_player_sideways: the player's sideways move (05a 3.2). While the jump
+; move_player_sideways: the player's sideways move. While the jump
 ; spring holds him (spring_anim not 0) he does not move, and the spring's
 ; step comes back as the pixels moved: move_on_ground and
-; move_sideways_in_air (04) store it as his push on the scroll (05a L22).
+; move_sideways_in_air store it as his push on the scroll.
 ;
 ; In:       D = the player's record
 ; Out:      as move_object_sideways; or A = spring_anim (1-4)
@@ -237,11 +174,11 @@ move_player_sideways:
 .i8
         lda spring_anim
         beq move_object_sideways        ; no spring step: the move (the next routine)
-        rts                             ; the spring holds him: its step is his push (05a L22)
+        rts                             ; the spring holds him: its step is his push
 
 ; ---------------------------------------------------------------------------
 ; move_object_sideways (also move_enemy_sideways): the object moves sideways
-; by its X speed (05a 3.1, 3.2). The speed is a signed byte in 1/16 pixel
+; by its X speed. The speed is a signed byte in 1/16 pixel
 ; each frame; the move adds the speed x 16, sign extended, to the 24-bit X:
 ; one 16-bit add of the fraction and the pixel, then the page with the
 ; carry and the sign. The original's three adds (fraction, pixel with the
@@ -250,7 +187,7 @@ move_player_sideways:
 ; In:       D = the record; Object::x_speed
 ; Out:      Object::x_fraction, x_pos moved; A = the whole pixels of the
 ;           move, -8 to +8 (the pixel byte after the move minus the one
-;           before; the player's push on the scroll (04) and 05b read it)
+;           before; the player's push on the scroll and enemy code read it)
 ; Changes:  A, the flags
 ; Keeps:    X, Y, D
 ; Time:     about 80 cycles; many times each frame
@@ -258,6 +195,9 @@ move_player_sideways:
 ;           (move_enemy_sideways: the enemy number to the object slot)
 ; ---------------------------------------------------------------------------
 move_enemy_sideways:
+; move_enemy_sideways and move_object_sideways are one routine: the
+;   original's move_enemy_sideways only turned the enemy number into the
+;   object slot, and D is the record here.
 move_object_sideways:
 .a8
 .i8
@@ -294,8 +234,8 @@ move_object_sideways:
         rts
 
 ; ---------------------------------------------------------------------------
-; apply_gravity: the vertical move of the object, then the pull of the frame
-; (05a 3.3). The speed of before the pull moves the object: the 24-bit Y
+; apply_gravity: the vertical move of the object, then the pull of the frame.
+; The speed of before the pull moves the object: the 24-bit Y
 ; (y_fraction, the pixel, Y high) gains the Y speed, sign extended. Then the
 ; down pull adds to the speed, and the down limit sets the speed to the top
 ; speed when its whole part is the top speed or more by the original's
@@ -318,6 +258,9 @@ move_object_sideways:
 ; Time:     about 100 cycles; several times each frame
 ; Original: $BFD7-$C018 (apply_gravity with A = 0)
 ; ---------------------------------------------------------------------------
+; apply_gravity has two entries: apply_gravity (the down pull only, the
+;   original's A = 0) and apply_gravity_up (the down and the up pull, A not
+;   0). apply_vertical_move is apply_gravity under its own name.
 apply_gravity:
 .a8
 .i8
@@ -359,7 +302,7 @@ apply_gravity:
 
 ; ---------------------------------------------------------------------------
 ; apply_gravity_up: apply_gravity, then the up pull of the frame and the up
-; limit (05a 3.3, steps 4-5). The up pull subtracts from the speed; when the
+; limit. The up pull subtracts from the speed; when the
 ; whole part is then below -top by the original's 8-bit test (bit 7 of
 ; whole - (-top) set) and the fraction is below 1/2, the speed becomes
 ; -top + 255/256. Adding top x 256 to the speed word gives the original's
@@ -397,7 +340,7 @@ apply_gravity_up:
         rts
 
 ; ---------------------------------------------------------------------------
-; The fall routines (05a 3.4): each gives apply_gravity the pull and the top
+; The fall routines: each gives apply_gravity the pull and the top
 ; speed of its objects.
 ;
 ; In:       D = the record (the player's for move_player_up_down)
@@ -410,9 +353,12 @@ apply_gravity_up:
 ;           X = obj_slot; here X is kept)
 ; ---------------------------------------------------------------------------
 
-; move_player_up_down ($BF4D-$BF62): the player falls with gravity_up (04).
+; move_player_up_down ($BF4D-$BF62): the player falls with gravity_up.
 ; While the timers run (no timer_hold) the jump spring holds him: no move.
 ; During timer_hold he falls even while the spring moves.
+; The original's shared tails of the fall routines (set_top_speed_three,
+;   drop_object_max_a, red_paratroopa_move, red_paratroopa_gravity) are
+;   gone: each fall routine loads its pull and its top speed.
 move_player_up_down:
 .a8
 .i8
@@ -477,7 +423,7 @@ move_drop_lift:
         jmp apply_gravity
 
 ; move_enemy_slowly ($BF8C-$BF91): the blooper, the swimming cheep-cheeps,
-; the bridge fall and Bowser (05b).
+; the bridge fall and Bowser.
 move_enemy_slowly:
 .a8
 .i8
@@ -486,7 +432,7 @@ move_enemy_slowly:
         jmp apply_gravity
 
 ; move_leaper_vertically ($BF92-$BF93): the lava ball, the leaping
-; paratroopa, the bullet bill, the swooping cheep-cheep (05b).
+; paratroopa, the bullet bill, the swooping cheep-cheep.
 move_leaper_vertically:
 .a8
 .i8
@@ -496,7 +442,7 @@ move_leaper_vertically:
 
 ; drop_block_object ($BFA4-$BFAC): a bumped block or a brick piece (objects.s
 ; run_block_objects): the top speed is entry 1 of the original's
-; block_fall_limits (entry 0 has no reader, 05a L17).
+; block_fall_limits (entry 0 has no reader).
 drop_block_object:
 .a8
 .i8
@@ -506,7 +452,7 @@ drop_block_object:
 
 ; lower_lift ($BFB4-$BFB6): a lift on its way down: the down pull only. The
 ; original would give kind $29 the pull 9, but only kinds $24 and $25 come
-; here (05a L16).
+; here.
 lower_lift:
 .a8
 .i8
@@ -515,7 +461,7 @@ lower_lift:
         jmp apply_gravity
 
 ; raise_lift ($BFB7-$BFD0): a lift on its way up: the down pull, then the up
-; pull (05a L16 as lower_lift).
+; pull (as lower_lift).
 raise_lift:
 .a8
 .i8
@@ -528,13 +474,13 @@ raise_lift:
         rts
 
 ; apply_vertical_move ($BF96-$BF9E): apply_gravity under the name that the
-; swooping cheep-cheep (05b swoop_fish) calls, with A = the down pull ($0D)
+; swooping cheep-cheep (swoop_fish) calls, with A = the down pull ($0D)
 ; and Y = the top speed (5). The original's register roles were the other
 ; way round (Y the pull, A the top speed).
 apply_vertical_move = apply_gravity
 
 ; ---------------------------------------------------------------------------
-; enemies_and_loops: one enemy slot in the frame (05a 18.1). A second half
+; enemies_and_loops: one enemy slot in the frame. A second half
 ; (Bowser's, a long fire bar's: Object::active $80 + the first half's
 ; enemy number) stays while its first half is active, and does nothing
 ; else. An active slot runs its kind's routine. A free slot reads the next
@@ -545,7 +491,7 @@ apply_vertical_move = apply_gravity
 ;
 ; In:       D = the record of the enemy slot (game_core: slots 0-5; the
 ;           victory mode: slot 0)
-; Out:      D the same record (score_numbers, 07, runs next for it)
+; Out:      D the same record (score_numbers runs next for it)
 ; Changes:  A, X, Y, and what the slot's routine changes
 ; Time:     each frame for each enemy slot
 ; Original: $C047-$C06A
@@ -578,9 +524,9 @@ enemies_and_loops:
         jmp read_enemy_spawns
 
 ; ---------------------------------------------------------------------------
-; check_loop: the loop check of a castle maze (05a 19.2). A castle repeats a
+; check_loop: the loop check of a castle maze. A castle repeats a
 ; part of its area until the player takes the right path: the area builder
-; sets loop_command at a check's column (06). At the first column of a page
+; sets loop_command at a check's column. At the first column of a page
 ; (parse_column 0) the check i of this world and parse page decides: the
 ; player passes when his Y is the check's and he stands on the ground. In
 ; worlds other than 7 a miss sends him back at once; world 7 counts its
@@ -595,6 +541,8 @@ enemies_and_loops:
 ;           due
 ; Original: $C0CC-$C12E (the start of read_enemy_spawns)
 ; ---------------------------------------------------------------------------
+; The loop check (check_loop) is its own routine; the original keeps it
+;   at the start of read_enemy_spawns.
 check_loop:
 .a8
 .i8
@@ -637,7 +585,7 @@ check_loop:
         beq @clear                      ; all three passed
 @back:
         jsr send_player_back
-        jsr erase_all_enemies           ; 05b: enemy slots 0-4 and frenzy_kind
+        jsr erase_all_enemies ; enemy slots 0-4 and frenzy_kind
 @clear:
         stz loop_passes
         stz loop_correct
@@ -648,9 +596,8 @@ check_loop:
 ; ---------------------------------------------------------------------------
 ; send_player_back: a missed loop sends the player, the screen and the area
 ; builder 4 pages back, and the enemy list starts again from its first
-; record (05a 19.4). Four pages are two laps of the name tables and of the
-; collision buffers, so the screen and the buffers stay valid (06 section
-; 15). The entries of the pages left of the screen are passed over by the
+; record. Four pages are two laps of the name tables and of the
+; collision buffers, so the screen and the buffers stay valid. The entries of the pages left of the screen are passed over by the
 ; left-edge rule of read_enemy_spawns.
 ;
 ; In:       X = the loop check (0 to LOOP_CHECKS - 1)
@@ -679,19 +626,19 @@ send_player_back:
         a8
         stz enemy_offset
 ; The levels part: parse_page and the area list's page 4 back, its page step
-; 0, its place = loop_rewind_offsets[X] (06 section 15).
+; 0, its place = loop_rewind_offsets[X].
         jmp rewind_area_objects
 
 ; ---------------------------------------------------------------------------
 ; read_enemy_spawns: a free enemy slot takes the next spawn record of the
-; area (05a 20.2). One call starts at most one record (a group starts two
+; area. One call starts at most one record (a group starts two
 ; or three enemies). The records are read in order: one that waits blocks
 ; the later ones.
 ;
 ; The levels part converts each area's enemy list at build time into spawn
 ; records, with the original's page rules applied (the page flag counted
 ; once, the entry after a page skip that loses its page flag, the row-15
-; entry with the page flag that is an enemy, 05a L33). next_spawn_record
+; entry with the page flag that is an enemy). next_spawn_record
 ; (src/game/area.s) gives the record that enemy_offset names in:
 ;   spawn_kind      SPAWN_END, SPAWN_SKIP, SPAWN_LINK, or the enemy kind
 ;                   (the list's byte 1 AND $3F: $00-$36 one enemy, $37-$3E
@@ -710,7 +657,7 @@ send_player_back:
 ;    waits, untouched.
 ; 5. A page skip: a slot 0-4 goes on with the next record in the same call.
 ; 6. The slot takes the entry's X first (it stays in a slot that does not
-;    start, 05a 20.2).
+;    start).
 ; 7. Left of the screen's right edge: a link counts; any other entry is
 ;    passed over (it never starts).
 ; 8. Past the column 48 pixels past the right edge: the entry waits;
@@ -719,7 +666,7 @@ send_player_back:
 ;    link counts. A hard-mode entry without hard_mode_2 is passed over. A
 ;    group starts its enemies. A goomba is a buzzy beetle in hard mode. The
 ;    enemy starts; when its start leaves the slot free (stop_waves, a
-;    Lakitu during a wave, 05a L30) the entry stays for the next call.
+;    Lakitu during a wave) the entry stays for the next call.
 ; The loop check's second run after a page skip in the original changes
 ; nothing (it cleared loop_command or found no check), so the port goes on
 ; at step 3.
@@ -808,7 +755,7 @@ read_enemy_spawns:
         cmp #KIND_GROUP
         bcc @one
         cmp #KIND_GROUP_END
-        bcs @one                        ; kind $3F: one enemy (no list holds it, 05a L12)
+        bcs @one                        ; kind $3F: one enemy (no list holds it)
         jmp start_enemy_group
 @one:
         cmp #KIND_GOOMBA
@@ -823,9 +770,9 @@ read_enemy_spawns:
         jsr start_enemy_object
         lda Object::active
         bne step_spawn_record
-        rts                             ; the start left the slot free: the entry stays (05a L30)
+        rts                             ; the start left the slot free: the entry stays
 ; A link counts for its world: the area that a pipe or a vine of this area
-; leads to (06 section 13).
+; leads to.
 @link:
         lda spawn_link_world
         cmp player_record + PlayerRecord::world
@@ -837,7 +784,7 @@ read_enemy_spawns:
         ; falls into step_spawn_record
 
 ; ---------------------------------------------------------------------------
-; step_spawn_record: the list goes on with the next record (05a 20.5). The
+; step_spawn_record: the list goes on with the next record. The
 ; original steps its byte offset by 2 or 3 and clears its page step; the
 ; records have neither.
 ;
@@ -847,6 +794,9 @@ read_enemy_spawns:
 ; Time:     8 cycles
 ; Original: $C250-$C26B (step_enemy_list, step_list_three, step_list_two)
 ; ---------------------------------------------------------------------------
+; The list stepping (step_enemy_list, step_list_two, step_list_three) is
+;   one step to the next spawn record (step_spawn_record): the records have
+;   no byte lengths and the build resolved the page flag.
 step_spawn_record:
 .a8
 .i8
@@ -856,10 +806,10 @@ step_spawn_record:
 ; ---------------------------------------------------------------------------
 ; take_queued_enemy: a free slot at the end of the list, or before an entry
 ; that waits, takes the running wave's next enemy, or the second vine
-; object while one vine grows (05a 20.3). The slot's Object::active is not
+; object while one vine grows. The slot's Object::active is not
 ; set here: the wave's routine sets it when it puts an enemy in the slot.
 ; The kind stays in the slot's kind byte even when the wave puts nothing
-; there (05a L25).
+; there.
 ;
 ; In:       D = the free slot's record
 ; Out:      the slot, as the start of the kind leaves it
@@ -883,18 +833,17 @@ take_queued_enemy:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_enemy_object: the slot's state 0, then the start of its kind (05a
-; 20.4).
-; route_enemy_start: the start of the slot's kind (05a 21.1): the kinds
+; start_enemy_object: clear the slot's state, then start its kind.
+; route_enemy_start: the start of the slot's kind: the kinds
 ; below KIND_BOWSER_FLAME start 8 pixels lower (an 8-bit add: Y high stays)
 ; and take no part in the box tests until their routine builds their box;
 ; then the kind's start routine. The original's jump routine leaves
 ; values in Y, the carry and its scratch bytes; each one that a start
-; routine reads has its own name here (05a L3, L23).
+; routine reads has its own name here.
 ;
 ; In:       D = the record, with its kind, place, Object::active and (but
 ;           for start_enemy_group's members) the state 0 set
-; Out:      the start values of the kind (05a 21.2)
+; Out:      the start values of the kind
 ; Changes:  A, X, Y, and what the start routine changes
 ; Time:     at each start
 ; Original: $C226-$C22D (start_enemy_object), $C26C-$C2EF (route_enemy_start)
@@ -903,6 +852,11 @@ start_enemy_object:
 .a8
 .i8
         stz Object::state
+; The start routines share their tails by the job (the box, the speed,
+;   the facing); a store that a later step of the same start replaces is
+;   not made (no_wave_code, start_nothing_last, store_enemy_speed,
+;   tall_box_return, store_box_return, big_lift_box_kind are gone).
+; Original address: $C2F0-$C881.
 route_enemy_start:
 .a8
 .i8
@@ -919,8 +873,8 @@ route_enemy_start:
         asl a
         tax
         jmp (.loword(enemy_starts),x)
-; The start routine of each kind, $00-$36 (05a 21.2). The kinds that no list,
-; wave or builder starts (05a 21.2 "in no list") keep the original's entry.
+; The start routine of each kind, $00-$36. The kinds that no list,
+; wave or builder starts keep the original's entry.
 enemy_starts:
         .addr start_walker              ; $00 green koopa
         .addr start_walker              ; $01
@@ -969,7 +923,7 @@ enemy_starts:
         .addr start_lift_down           ; $2C small lift going down
         .addr start_bowser              ; $2D
         .addr set_powerup_start         ; $2E power-up (objects.s)
-        .addr start_second_vine         ; $2F vine (objects.s, 05a L3)
+        .addr start_second_vine         ; $2F vine (objects.s)
         .addr start_nothing             ; $30 flagpole flag
         .addr start_nothing             ; $31 castle flag
         .addr start_nothing             ; $32 jump spring
@@ -980,13 +934,13 @@ enemy_starts:
 .assert * - enemy_starts = START_KINDS * 2, error, "enemy_starts: one entry for each kind $00-$36"
 
 ; ---------------------------------------------------------------------------
-; The small start routines (05a 21.3). Each one writes only its kind's
+; The small start routines. Each one writes only its kind's
 ; start values into D's record: the box (Object::box), the facing (2:
 ; left), the speeds, the kind's own fields.
 ;
 ; In:       D = the enemy's record (route_enemy_start; start_lava_ball also
-;           from move_lava_ball, 05b; start_piranha also from
-;           build_vertical_pipe, 06)
+;           from move_lava_ball; start_piranha also from
+;           build_vertical_pipe)
 ; Out:      the start values
 ; Changes:  A, X, Y, the flags
 ; Time:     at each start, under 60 cycles
@@ -1086,10 +1040,10 @@ box_and_face_left:
         ; falls into clear_enemy_vspeed
 
 ; ---------------------------------------------------------------------------
-; clear_enemy_vspeed: the object's Y speed 0, its fraction too (05a 21.3).
+; clear_enemy_vspeed: the object's Y speed 0, its fraction too.
 ;
 ; In:       D = the record
-; Out:      Object::y_speed 0; A = 0 (both bytes; callers of 05b and 07
+; Out:      Object::y_speed 0; A = 0 (both bytes; enemy and collision callers
 ;           store it on)
 ; Changes:  A
 ; Keeps:    X, Y, D
@@ -1107,8 +1061,7 @@ clear_enemy_vspeed:
 
 ; start_red_paratroopa ($C34A-$C359): its start Y, and the middle Y of its
 ; way: $30 lower when it starts above Y $80, else $20 higher. The add is 8
-; bits, with the clear carry that the original's jump routine leaves (05a
-; L23).
+; bits, with the clear carry that the original's jump routine leaves.
 start_red_paratroopa:
 .a8
 .i8
@@ -1153,7 +1106,7 @@ start_fish:
         rts
 
 ; start_lava_ball ($C2F7-$C306): below the picture (Y high 2, Y 2), its slow
-; timer 1, state 0, the small box. move_lava_ball (05b) also calls it to
+; timer 1, state 0, the small box. move_lava_ball also calls it to
 ; start each leap again.
 start_lava_ball:
 .a8
@@ -1177,7 +1130,7 @@ start_rescued_person:
         rts
 
 ; start_cloud_rider ($C385-$C389, $C395-$C397): Lakitu waits while a wave
-; runs: the slot is erased and the entry stays (05a L30).
+; runs: the slot is erased and the entry stays.
 ; place_cloud_rider ($C38A-$C394): lakitu_timer 0, no X speed, the tall box,
 ; facing left, no Y speed.
 start_cloud_rider:
@@ -1185,7 +1138,7 @@ start_cloud_rider:
 .i8
         lda frenzy_kind
         beq place_cloud_rider
-        jmp clear_enemy_slot            ; 05b
+        jmp clear_enemy_slot
 place_cloud_rider:
 .a8
 .i8
@@ -1193,8 +1146,8 @@ place_cloud_rider:
         bra start_flyer_or_swimmer
 
 ; start_piranha ($C787-$C79F): its speed 1, state 0, not moving, its low Y =
-; its Y and its high Y $18 above, the small box. The area builder (06
-; build_vertical_pipe) starts it too.
+; its Y and its high Y $18 above, the small box. The area builder
+; (build_vertical_pipe) starts it too.
 start_piranha:
 .a8
 .i8
@@ -1225,8 +1178,8 @@ start_leaping_paratroopa:
         rts
 
 ; ---------------------------------------------------------------------------
-; The fire bars (05a 21.10). start_long_fire_bar: a second half in a free
-; slot holds the bar's other pieces (05b), then start_fire_bar. start_fire_bar:
+; The fire bars. start_long_fire_bar: a second half in a free
+; slot holds the bar's other pieces, then start_fire_bar. start_fire_bar:
 ; the angle's low byte 0, the turn speed and direction of its kind, the
 ; centre 4 pixels right (with the page) and 4 down (8 bits), the tall box.
 ;
@@ -1265,7 +1218,7 @@ start_fire_bar:
         rts
 
 ; ---------------------------------------------------------------------------
-; The lifts (05a 21.11).
+; The lifts.
 ;
 ; In:       D = the lift's record
 ; Out:      its start values; balance_side (start_scale_lift)
@@ -1445,9 +1398,9 @@ offset_lift_x:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_bowser: Bowser (05a 21.12): his second half in a free slot, his slot
+; start_bowser: Bowser: his second half in a free slot, his slot
 ; in bowser_front_slot, the counters of his fight. His direction starts at
-; the breath timer's value $DF (05a L32; 05b L5: draw_enemy and his routine
+; the breath timer's value $DF (draw_enemy and his routine
 ; read both bits until his routine sets 1 or 2).
 ;
 ; In:       D = Bowser's record (kind $2D)
@@ -1480,10 +1433,10 @@ start_bowser:
         rts
 
 ; ---------------------------------------------------------------------------
-; copy_enemy_to_free_slot: the second half of Bowser or of a long fire bar
-; (05a 21.12). It takes the lowest free enemy slot from slot 0 up; the
+; copy_enemy_to_free_slot: the second half of Bowser or of a long fire bar.
+; It takes the lowest free enemy slot from slot 0 up; the
 ; original's search has no upper end, so when slots 0-5 are all active it
-; takes "slot 6" (05a L8): its active byte is the seventh active byte, here
+; takes "slot 6": its active byte is the seventh active byte, here
 ; the Object::active of the first fireball's record, which no fireball
 ; reads, and its X and Y are the first fireball's, as in the original
 ; ($15, $74, $8D, $BC, $D5). The second half gets $80 + the first half's
@@ -1503,7 +1456,7 @@ copy_enemy_to_free_slot:
         ldx #0                          ; X = the enemy number n
 @find:
         cpx #ENEMY_SLOTS
-        beq @found                      ; none of 0-5 free: the seventh active byte (05a L8)
+        beq @found                      ; none of 0-5 free: the seventh active byte
         txa
         xba
         lda #0
@@ -1540,17 +1493,17 @@ copy_enemy_to_free_slot:
         rts
 
 ; ---------------------------------------------------------------------------
-; The waves (05a 21.4-21.9). A wave kind ($12, $14-$17) that a list entry,
+; The waves. A wave kind ($12, $14-$17) that a list entry,
 ; frenzy_queue, Lakitu, Bowser or the castle flag starts sets frenzy_kind;
 ; then each free slot that reaches take_queued_enemy runs the wave's routine
 ; each frame. The wave timer is the frame timer timers + TIMER_FRENZY, the
-; same byte as enemy slot 5's frame timer (05a L29: clear_enemy_slot for
+; same byte as enemy slot 5's frame timer (clear_enemy_slot for
 ; slot 5 stops it).
 ;
 ; frenzy_kind   meaning     events
 ; 0             no wave     a wave kind starts begin_wave (frenzy_kind =
 ;                           the kind); move_cloud_rider sets $12, Bowser
-;                           $15, the castle flag $16 (05b)
+;                           $15, the castle flag $16
 ; $12, $14-$17  wave k runs each free slot at the end of the list or before
 ;                           a waiting entry runs wave k's routine; kind $18
 ;                           (stop_waves), erase_all_enemies, the flame from
@@ -1586,9 +1539,8 @@ wave_starts:
 
 ; ---------------------------------------------------------------------------
 ; stop_waves: kind $18 stops the waves: each slot 5-0 whose kind is Lakitu's
-; gets the leaving state (the search does not look at Object::active, 05a
-; L25); frenzy_kind 0; this slot stays free, so its entry stays and runs
-; again each frame until the screen passes it (05a L30).
+; gets the leaving state (the search does not look at Object::active); frenzy_kind 0; this slot stays free, so its entry stays and runs
+; again each frame until the screen passes it.
 ;
 ; In:       D = the slot's record
 ; Changes:  A, X
@@ -1619,19 +1571,19 @@ stop_waves:
         rts
 
 ; ---------------------------------------------------------------------------
-; run_cloud_rider_wave: the spiny wave, kind $12 (05a 21.4). Each 128
+; run_cloud_rider_wave: the spiny wave, kind $12. Each 128
 ; frames (the wave timer) in a free slot 0-4: with Lakitu (the highest of
-; slots 4-0 whose kind is his, active or not, 05a L25) and the player low
+; slots 4-0 whose kind is his, active or not) and the player low
 ; enough, a spiny egg falls from Lakitu in this slot; without Lakitu, after
 ; 7 such rounds a Lakitu comes back in the highest free slot 4-0, 32 pixels
 ; past the screen's right edge.
 ;
 ; The original measures the gap to the player for the egg's X speed
-; (measure_player_gap, 05b) and then loses the result: every egg starts with
-; X speed 0, facing right (05a L5). For a slot of kind $12 the measure
+; (measure_player_gap) and then loses the result: every egg starts with
+; X speed 0, facing right. For a slot of kind $12 the measure
 ; writes only its own scratch, so the port does not run it.
 ; A returning Lakitu ends in the flame's start: the flame's box, X fraction
-; 0, state 0 (05a L6).
+; 0, state 0.
 ;
 ; In:       D = the slot's record (its kind $12)
 ; Out:      the egg in this slot, or the Lakitu in his slot
@@ -1703,7 +1655,7 @@ run_cloud_rider_wave:
         lda #FACING_LEFT
         sta Object::direction
         lda #LAKITU_RETURN_Y
-        jsr place_at_right_edge         ; Y, X; box BOX_FLAME, active, state 0 (05a L6)
+        jsr place_at_right_edge         ; Y, X; box BOX_FLAME, active, state 0
         jsr clear_enemy_vspeed
         pld
         rts
@@ -1730,7 +1682,7 @@ run_cloud_rider_wave:
         ax8
         lda #BOX_SMALL_ENEMY
         sta Object::box
-        stz Object::x_speed             ; the measured speed is lost (05a L5)
+        stz Object::x_speed             ; the measured speed is lost
         lda #FACING_RIGHT
         sta Object::direction
         lda #ENEMY_ACTIVE
@@ -1745,7 +1697,7 @@ run_cloud_rider_wave:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_flying_fish: the flying cheep-cheep wave, kind $14 (05a 21.5). When
+; start_flying_fish: the flying cheep-cheep wave, kind $14. When
 ; the wave timer is 0, every free slot takes the small box, facing left, no
 ; Y speed, and starts the next gap; slots 0-2 (0-3 with hard_mode_2) take a
 ; fish. The fish jumps out of the water ($F8, below the picture) at a speed
@@ -1854,10 +1806,10 @@ start_flying_fish:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_bowser_flame: the Bowser flame wave, kind $15 (05a 21.6). When the
+; start_bowser_flame: the Bowser flame wave, kind $15. When the
 ; wave timer is 0: the flame's drift 0 and the flame sound (an OR). With
 ; Bowser in his slot the flame starts at his mouth: 14 pixels left of his X
-; on his page (8 bits: no borrow into the page, 05a L7) and 8 pixels below
+; on his page (8 bits: no borrow into the page) and 8 pixels below
 ; his Y; its height h is random + e AND 3, and it drifts toward
 ; bowser_flame_heights[h]; frenzy_kind 0 (one flame for each breath) and the
 ; timer is not set. Without Bowser the flame starts 32 pixels past the
@@ -1887,7 +1839,7 @@ start_bowser_flame:
         beq @mouth
         sep #P_X8
 ; From the right edge, at a height of the table.
-        jsr next_flame_gap              ; 05b: A = the next gap
+        jsr next_flame_gap ; A = the next gap
         clc
         adc #FLAME_GAP
         ldy hard_mode_2
@@ -1907,7 +1859,7 @@ start_bowser_flame:
         sta Object::x_pos+1
         lda enemy_objects + Object::x_pos,x
         sec
-        sbc #FLAME_BACK                 ; the page does not borrow (05a L7)
+        sbc #FLAME_BACK                 ; the page does not borrow
         sta Object::x_pos
         lda enemy_objects + Object::y_pos,x
         clc
@@ -1943,7 +1895,7 @@ flame_height:
 ; ---------------------------------------------------------------------------
 ; place_at_right_edge: the enemy at Y = A, 32 pixels past the screen's right
 ; edge (page with the carry); then finish_flame_start: the flame's box, Y
-; high 1, active, X fraction 0, state 0 (05a 21.6).
+; high 1, active, X fraction 0, state 0.
 ;
 ; In:       D = the enemy's record; A = its Y
 ; Out:      its place, box, Object::active and state
@@ -1952,6 +1904,8 @@ flame_height:
 ;           its A = 0 has no reader here: pick_unused_row clears the Y
 ;           fraction itself)
 ; ---------------------------------------------------------------------------
+; place_at_right_edge and finish_flame_start are one routine.
+;
 place_at_right_edge:
 .a8
 .i8
@@ -1976,10 +1930,10 @@ finish_flame_start:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_firework: the fireworks, kind $16 (05a 21.7). When the wave timer is
+; start_firework: the fireworks, kind $16. When the wave timer is
 ; 0: the next gap, one burst less, and a burst over the castle: the castle
 ; flag is the highest of slots 5-0 with its kind (the original's search has
-; no lower end, 05a L9; the fireworks start only after the castle flag, so
+; no lower end; the fireworks start only after the castle flag, so
 ; it is always found); burst i = fireworks_count + the flag's state, at the
 ; flag's X - $30 + firework_x_offsets[i] (page with the borrow and the
 ; carry) and firework_y_offsets[i].
@@ -2008,7 +1962,7 @@ start_firework:
         sec
         sbc #OBJECT_PAGE
         tax
-        bne @find                       ; slots 5-1 hold no flag: slot 0 (05a L9)
+        bne @find                       ; slots 5-1 hold no flag: slot 0
         sep #P_M8
 @flag:
         lda enemy_objects + Object::state,x
@@ -2038,8 +1992,8 @@ start_firework:
         rts
 
 ; ---------------------------------------------------------------------------
-; start_bullet_fish_wave: the bullet bill and cheep-cheep wave, kind $17
-; (05a 21.8). When the wave timer is 0: in a water area slots 0-2 take a
+; start_bullet_fish_wave: the bullet bill and cheep-cheep wave, kind $17.
+; When the wave timer is 0: in a water area slots 0-2 take a
 ; swimming cheep-cheep (mostly the grey one in world 2, the red one
 ; elsewhere: random + e $AA or more takes the other); elsewhere a bullet
 ; bill with the blast sound (an OR), while none of slots 0-4 holds an
@@ -2151,7 +2105,7 @@ pick_unused_row:
 
 ; ---------------------------------------------------------------------------
 ; start_enemy_group: a group entry of the list starts its two or three
-; enemies (05a 21.13). Group g = kind - $37: goombas (buzzy beetles in hard
+; enemies. Group g = kind - $37: goombas (buzzy beetles in hard
 ; mode) for g 0-3, green koopas for 4-7; Y $B0, or $70 when bit 1 of g is 1;
 ; 2 members, 3 when bit 0 of g is 1. The first stands at the screen's right
 ; edge (the entry's own column is not used), the next ones 24 pixels apart,
@@ -2245,10 +2199,9 @@ start_enemy_group:
         jmp step_spawn_record
 
 ; ---------------------------------------------------------------------------
-; run_enemy_slot: the routine of the slot's kind, each frame (05a 22.1).
-; Kinds below KIND_BOWSER_FLAME are the ordinary enemies (run_ordinary_enemy,
-; 05b); the others have the table below, kinds $15-$35. The original's run
-; table ends after kind $35: kind $36 is never active (05a L12).
+; run_enemy_slot: the routine of the slot's kind, each frame.
+; Kinds below KIND_BOWSER_FLAME are the ordinary enemies (run_ordinary_enemy); the others have the table below, kinds $15-$35. The original's run
+; table ends after kind $35: kind $36 is never active.
 ;
 ; In:       D = the active slot's record
 ; Out:      the kind's routine's
@@ -2263,19 +2216,19 @@ run_enemy_slot:
         lda Object::kind
         cmp #KIND_BOWSER_FLAME
         bcs @table
-        jmp run_ordinary_enemy          ; 05b
+        jmp run_ordinary_enemy
 @table:
         asl a
         tax
         jmp (.loword(enemy_runs - KIND_BOWSER_FLAME * 2),x)
 enemy_runs:
-        .addr run_bowser_fire           ; $15 (05b)
-        .addr animate_fireworks         ; $16 (05b)
+        .addr run_bowser_fire           ; $15
+        .addr animate_fireworks         ; $16
         .addr run_nothing               ; $17-$1A: the waves run from take_queued_enemy
         .addr run_nothing
         .addr run_nothing
         .addr run_nothing
-        .addr run_fire_bar              ; $1B-$22 (05b)
+        .addr run_fire_bar              ; $1B-$22
         .addr run_fire_bar
         .addr run_fire_bar
         .addr run_fire_bar
@@ -2284,29 +2237,28 @@ enemy_runs:
         .addr run_fire_bar
         .addr run_fire_bar
         .addr run_nothing               ; $23
-        .addr run_large_lift            ; $24-$2A (05b)
+        .addr run_large_lift            ; $24-$2A
         .addr run_large_lift
         .addr run_large_lift
         .addr run_large_lift
         .addr run_large_lift
         .addr run_large_lift
         .addr run_large_lift
-        .addr run_small_lift            ; $2B, $2C (05b)
+        .addr run_small_lift            ; $2B, $2C
         .addr run_small_lift
-        .addr bowser_actions            ; $2D (05b)
+        .addr bowser_actions            ; $2D
         .addr run_powerup               ; $2E (objects.s)
         .addr run_vine                  ; $2F (objects.s)
         .addr run_nothing               ; $30: the flag runs in run_flag_object (objects.s)
-        .addr run_castle_flag           ; $31 (05b)
+        .addr run_castle_flag           ; $31
         .addr run_jump_spring           ; $32 (objects.s)
         .addr run_nothing               ; $33: the cannon bullet runs in run_cannons (objects.s)
         .addr warp_zone_exit_check      ; $34 (objects.s)
-        .addr run_rescued_person        ; $35 (05b)
+        .addr run_rescued_person        ; $35
 .assert * - enemy_runs = (RUN_KINDS_END - KIND_BOWSER_FLAME) * 2, error, "enemy_runs: one entry for each kind $15-$35"
 
 ; ---------------------------------------------------------------------------
-; run_nothing: the routine of the kinds that do nothing in the enemy loop
-; (05a 22.2).
+; run_nothing: the routine of the kinds that do nothing in the enemy loop.
 ;
 ; Original: $C8D6
 ; ---------------------------------------------------------------------------

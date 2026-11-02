@@ -1,9 +1,9 @@
-# Super Mario Bros. for the Apple IIgs with Second Sight
+# Super Mario Bros for the Apple IIgs with Second Sight
 
 > **Prerelease.** This build is not finished.
 
-A port of Nintendo's *Super Mario Bros.* to the Apple IIgs with a Sequential
-Systems Second Sight card. The build reads the game from the NES cartridge file
+A port of *Super Mario Bros.* to the Apple IIgs with a Sequential
+Systems Second Sight VGA card. The build reads the game from the NES cartridge file
 or from the PlayChoice-10 arcade set. The game runs as native 65816 and Z180
 code.
 
@@ -13,9 +13,8 @@ your own ROM files when you build.
 ## What you need to play
 
 - A ROM 03 Apple IIgs, or a ROM 01 with a memory card of 256 KB or more
-- A Second Sight card in slot 3, with a VGA monitor or an AppleColor RGB
-  monitor on the card
-- A hard disk device for the disk image (see the list under Build)
+- An ultra rare Second Sight card in slot 3, with compatible monitor connected.
+- A hay to booth the disk image.
 - Optional: a game-port joystick, a J13 keyboard (ROM 00 and ROM 01), or a
   SNES MAX adapter with one or two SNES or NES pads
 
@@ -97,7 +96,7 @@ select.
   when you restart or switch off the IIgs.
 - **RESUME**: back to the game.
 
-The game runs at 60.06 frames a second on VGA and 60.17 on AppleColor RGB,
+The game runs at 59.94 frames a second on VGA and 60.05 on AppleColor RGB,
 close to the NES's 60.10.
 
 ## Folders

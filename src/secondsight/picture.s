@@ -13,20 +13,19 @@
 ;   5. draw the sprites (sprites.s);
 ;   6. show the page: the start address while the old page still shows,
 ;      then at the vertical retrace the pan, the palette and the screen
-;      on/off (15-oak-drawing.md, "Page flipping", "Horizontal pixel
-;      panning").
+;      on/off.
 ; A packet with PF_MENU starts the options menu instead (menu.s).
 ;
-; The card never waits for the IIgs inside a picture; the IIgs sends the
-; next packet when it sees the token (src/stream.s).
+; The card waits for a complete packet at the start of each picture
+; (stream_take). It arms the next receive before drawing the sprites; the
+; IIgs sends when it sees the token (src/stream.s).
 ;
 ; The phase: the IIgs game clock runs at the picture rate that the mode
 ; should have (src/clock.s), but the card's clock may be 0.5% off its
 ; listed rate, and the two crystals differ. So the card measures where each
 ; packet arrives against its own vertical retrace, and the token of the next
 ; buffer carries that phase to the IIgs, which moves its clock to hold the
-; arrival a little before the retrace (Second Sight reference
-; 14-custom-code.md, "Game timing"). PRT0 runs free, one step each 20
+; arrival a little before the retrace. PRT0 runs free, one step each 20
 ; clocks; a time is its count, which falls. retrace_watch stamps an
 ; arrival during its wait for the retrace; stream_take stamps one after it
 ; (phase_late). The phase bits of the token:

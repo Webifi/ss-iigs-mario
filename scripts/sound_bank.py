@@ -1,38 +1,9 @@
-"""The DOC data of the NES sound unit model (src/sound.s): the wave tables
-of the squares and the triangle, their place in DOC RAM, and the volume
-register of every channel level at every level of the options menu.
+"""Build the IIgs sound-chip data used by the game's sound model.
 
-Nothing here comes from the game: these are facts of the NES sound unit
-(its waves and its mixer) and of the IIgs DOC (its volume knee). Any NES
-port uses them as they are.
-
-The squares and the triangle play one wave cycle per DOC table. A table
-serves one octave of periods: P from 2^k to 2^(k+1) - 1, k = 3 to 10
-(src/sound.s period_octaves; the triangle also plays periods under 8 from
-the first). All tables of a channel share one phase, so a change of octave
-or duty keeps the wave going without a click.
-
-The DOC voices: the sound unit's four channels, then the clock (src/clock.s),
-then DOC_VOICES enabled oscillators in all, as the 1943 port. The DOC's
-output is the average of its N + 2 slots, each voice weighted 1/(N + 2)
-(iigs-hardware-research/sound/iigs-analog-output-path.opus.md): with only the
-5 oscillators that the game plays, each voice was 4 times louder than in the
-1943 port, and the loudest music clipped after the board's filter. With 26,
-the loudest moment of all four channels at their top registers averages
-under 0.11 of one slot's full swing. The idle oscillators are halted and
-silent (src/clock.s clock_start).
-
-Each table is band-limited: harmonic n is in it only when it stays under
-HARMONIC_LIMIT at the highest pitch of the octave, so a note at the bottom
-of the octave still has its harmonics to half that (the board filter is
--3 dB near 8.5 kHz and -10 dB at 10.7 kHz; the 1943 port uses 11 kHz). The
-DOC scans its voices SCAN_RATE times a second. A table read slower than that
-holds each byte, and a table read faster skips bytes; either way the images
-lie at the read rate minus each harmonic, and the table is long enough, and
-the band limit low enough, that they stay above IMAGE_FLOOR.
-
-The noise (32 KB of the NES noise sequence) is made by src/sound.s at the
-start: this file only gives it its place.
+scripts/assets.py calls build() to create wave tables and volume settings
+for src/sound.s. The two square channels and triangle play these waves on
+DOC oscillators. The noise sequence is made at startup by src/sound.s; this
+module reserves its place in DOC RAM. Menu sound levels use the volume tables.
 """
 
 import math
@@ -40,9 +11,19 @@ import math
 import numpy as np
 
 CPU = 1789772.7  # the NES CPU clock (NTSC), Hz
+# The four sound channels and the clock use five oscillators. With only
+# five enabled, the louder music clipped after the board's filter. The DOC
+# output averages its N + 2 slots, so 26 enabled oscillators reduce each
+# channel to one quarter of its five-oscillator level. The unused oscillators
+# are halted and silent. At 26, the four channels at their maximum registers
+# average under 0.11 of one slot's full swing.
 DOC_VOICES = 26  # the enabled DOC oscillators (src/sound.inc and src/clock.s take it from sound_bank.inc)
 DOC_SLOT_RATE = 894886  # the DOC's oscillator slots a second: 7,159,090 Hz / 8
 SCAN_RATE = DOC_SLOT_RATE / (DOC_VOICES + 2)  # each voice is read this often, Hz
+# Limit harmonics at the highest pitch in each octave. The board filter is
+# about -3 dB near 8.5 kHz and -10 dB at 10.7 kHz. A DOC table read can
+# hold or skip bytes; the table size and limit keep resulting images above
+# IMAGE_FLOOR.
 HARMONIC_LIMIT = 11000.0  # Hz: the highest harmonic at the top pitch of a table
 IMAGE_FLOOR = 20000.0  # Hz: the lowest image of a held or skipped byte
 assert SCAN_RATE - HARMONIC_LIMIT >= IMAGE_FLOOR
@@ -78,9 +59,7 @@ def tnd(t, n, d):
 def knee_volume(register):
     """The DOC's effective volume for volume REGISTER on a ROM 01 or ROM 03
     board: a 1N914 diode (Is 2.5 nA, n 1.75) before the DOC's reference input
-    takes its drop off the volume voltage (5 V full scale, 1 kOhm load). The
-    same law as the 1943 port (iigs-hardware-research/sound/
-    twgs-guitar-loss.opus.md)."""
+    takes its drop off the volume voltage (5 V full scale, 1 kOhm load)."""
     low, high = 0.0, (5 * register / 256) / 1000
     for _ in range(64):
         mid = (low + high) / 2
@@ -115,6 +94,8 @@ def band_limited(steps, harmonics, length):
     return wave
 
 
+# Each table holds one wave cycle and covers periods 2^k through 2^(k+1)-1.
+# Tables for a channel share phase, so octave or duty changes do not click.
 def octave_tables(steps, cycles_per_period):
     """The band-limited tables of a channel whose pitch is
     CPU / (CYCLES_PER_PERIOD x (P + 1)), one per octave."""

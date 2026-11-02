@@ -59,8 +59,7 @@ image__load = load_sram + 0x12000;
 image__size = image__end - image__run;
 
 /* SRAM bank 1 $C000-$FFFF is the only part of bank 1 that no firmware part
-   ever writes (second-sight-reference reference/z180-memory-map.md, "SRAM
-   ownership"). It holds what must outlive the options menu besides the image:
+   ever writes. It holds what must outlive the options menu besides the image:
    the variables that the menu saves ($C000-$DFFF) and the pattern tables
    ($E000-$FFFF, fit_bank1 below). */
 menu_save = 0x1C000;            /* physical: bank 1 $C000-$DFFF */
@@ -161,7 +160,7 @@ fit_vram_tiles__kinds = FIT_VRAM;
    4 KB page, read through the bank area. The status bar reads chr_bg during
    the whole game, after an options menu too, so the tables cannot be in bank 1
    $1A000-$1BFFF: each start of the firmware's Super Hi-Res emulation copies
-   its code there (second-sight-reference reference/z180-memory-map.md). */
+   its code there. */
 fit_bank1__start = load_sram + pattern_tables;
 fit_bank1__end = load_sram + 0x20000;
 fit_bank1__label = fit_bank1__start;

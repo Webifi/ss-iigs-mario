@@ -6,8 +6,8 @@
 ; mode_table PREFIX, PATCHES: the code before the table PREFIX_data. With
 ; PATCHES, it first reads the cable sense: an AppleColor RGB monitor
 ; applies PATCHES (value, address) replacements from PREFIX_rgb. The choice
-; is made before any clock or CRTC write, so a VGA signal never reaches an
-; RGB monitor. The table and the replacements follow the macro, then
+; is made before the table writes the clock or CRTC. It does not change the
+; signal that was present beforehand. The table and replacements follow, then
 ; PREFIX_done.
 
         .ifndef MODE_TABLE_INC
