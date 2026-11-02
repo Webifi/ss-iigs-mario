@@ -1878,8 +1878,9 @@ upload_registers_end:
 loaded_bytes: .dword 0       ; load_progress: the bytes of SSMARIO.DATA read
 progress_done: .word 0       ; load_progress: the full cells, 0 to PROGRESS_CELLS
 ; The bytes of SSMARIO.DATA read when each progress cell fills: a copy of the
-; table of the data file header (DATA_PROGRESS, scripts/boot_disk.py).
-progress_thresholds: .res PROGRESS_CELLS*PROGRESS_ENTRY
+; table of the data file header (DATA_PROGRESS, scripts/boot_disk.py). The
+; read of that header comes before the copy: $FF bytes keep its cells empty.
+progress_thresholds: .res PROGRESS_CELLS*PROGRESS_ENTRY, $ff
 ; The load.
 path: .byte 12,"SSMARIO.DATA"
 read_request: .res 2         ; read_block: the bytes to read
