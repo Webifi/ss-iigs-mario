@@ -15,7 +15,7 @@ from startup_pack import pack, unpack
 sys.path.insert(0, str(ROOT / "bootloader"))
 from prodos_volume import Volume, apm, fitted_blocks
 
-VERSION_DIGITS = 6  # the hex digits of the volume hash in the image names
+VERSION_DIGITS = 6  # the hex digits of the game data hash in the image names
 
 
 PLANE = 0x200000
@@ -195,10 +195,11 @@ def build(case, out=None):
     disk.install("SSMARIO.SYSTEM", system, 0xFF, system_load)
     disk.install("SSMARIO.DATA", bundle, 6)
     disk.boot("SSMARIO.SYSTEM")
-    # The image names end in a short hash of the volume, so each build of
-    # other game data has its own name; the images of earlier builds go.
+    # The image names end in a short hash of the game data (the boot loader
+    # and the data file), so each build of other game data has its own name;
+    # the images of earlier builds go.
     data = bytes(disk.data)
-    version = hashlib.sha256(data).hexdigest()[:VERSION_DIGITS]
+    version = hashlib.sha256(system + bundle).hexdigest()[:VERSION_DIGITS]
     for old in [*out.glob("mario-*.hdv"), *out.glob("mario-*-scsi.hda")]:
         old.unlink()
     image = out / f"mario-{version}.hdv"

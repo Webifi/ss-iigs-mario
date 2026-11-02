@@ -13,7 +13,7 @@
 #    bootloader/boot0.cfg.
 # 5. The disk step (scripts/disk.py, Python): the card load records, the boot
 #    volume (mario-HASH.hdv and mario-HASH-scsi.hda in build/game-disk, HASH a
-#    short hash of the volume) and its debug symbols.
+#    short hash of the game data) and its debug symbols.
 #
 # The memory maps are hand-written; fitters put the asset data into their
 # free space:
