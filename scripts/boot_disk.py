@@ -4,6 +4,7 @@ A ProDOS volume: boot0 (bootloader/) loads SSMARIO.SYSTEM, which reads
 SSMARIO.DATA and SSMARIO.CONFIG with bootloader/prodos_read.s.
 """
 
+import hashlib
 import sys
 from types import SimpleNamespace
 
@@ -13,6 +14,8 @@ from startup_pack import pack, unpack
 
 sys.path.insert(0, str(ROOT / "bootloader"))
 from prodos_volume import Volume, apm, fitted_blocks
+
+VERSION_DIGITS = 6  # the hex digits of the volume hash in the image names
 
 
 PLANE = 0x200000
@@ -192,7 +195,13 @@ def build(case, out=None):
     disk.install("SSMARIO.SYSTEM", system, 0xFF, system_load)
     disk.install("SSMARIO.DATA", bundle, 6)
     disk.boot("SSMARIO.SYSTEM")
-    image = out / "mario.hdv"
-    image.write_bytes(disk.data)
-    (out / "mario-scsi.hda").write_bytes(apm(bytes(disk.data), "SSMARIO"))
+    # The image names end in a short hash of the volume, so each build of
+    # other game data has its own name; the images of earlier builds go.
+    data = bytes(disk.data)
+    version = hashlib.sha256(data).hexdigest()[:VERSION_DIGITS]
+    for old in [*out.glob("mario-*.hdv"), *out.glob("mario-*-scsi.hda")]:
+        old.unlink()
+    image = out / f"mario-{version}.hdv"
+    image.write_bytes(data)
+    (out / f"mario-{version}-scsi.hda").write_bytes(apm(data, "SSMARIO"))
     return image

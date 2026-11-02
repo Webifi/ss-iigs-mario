@@ -12,7 +12,8 @@
 # 4. The boot loader and the boot block (cc65): src/boot.cfg and
 #    bootloader/boot0.cfg.
 # 5. The disk step (scripts/disk.py, Python): the card load records, the boot
-#    volume (build/game-disk/mario.hdv) and its debug symbols.
+#    volume (mario-HASH.hdv and mario-HASH-scsi.hda in build/game-disk, HASH a
+#    short hash of the volume) and its debug symbols.
 #
 # The memory maps are hand-written; fitters put the asset data into their
 # free space:
@@ -36,7 +37,7 @@ LD65 ?= ld65
 SECONDSIGHT := build/secondsight
 GAME := build/game
 BOOT := build/game-disk
-DISK := $(BOOT)/mario.hdv
+DISK := $(BOOT)/debug.sym      # the last file of the disk step: the image names hold a hash
 ASSETS := build/assets.stamp
 LINT := build/lint.stamp
 

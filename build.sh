@@ -16,4 +16,5 @@ if ! cmp -s requirements.txt .venv/requirements.txt 2>/dev/null; then
   cp requirements.txt .venv/requirements.txt
 fi
 make -j"$(getconf _NPROCESSORS_ONLN)" PYTHON=.venv/bin/python
-echo "Disk image: build/game-disk/mario.hdv"
+echo "Disk images:"
+ls -1 build/game-disk/mario-*.hdv build/game-disk/mario-*-scsi.hda

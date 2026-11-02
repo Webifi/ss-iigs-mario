@@ -36,11 +36,12 @@ You need:
 2. Run `./build.sh`.
 
 The disk images are in `build/game-disk/`, each just large enough for the
-game and its settings file:
+game and its settings file. HASH in their names is a short hash of the
+volume (6 hex digits), so each build of other game data has its own name:
 
-- `mario.hdv`: a ProDOS volume, for a CFFA3000, a FloppyEmu or another
+- `mario-HASH.hdv`: a ProDOS volume, for a CFFA3000, a FloppyEmu or another
   SmartPort hard disk, a MicroDrive/Turbo, a BOOTI or an emulator
-- `mario-scsi.hda`: the same volume with an Apple partition map, for an Apple
+- `mario-HASH-scsi.hda`: the same volume with an Apple partition map, for an Apple
   SCSI card with a BlueSCSI, ZuluSCSI or SCSI2SD
 - `debug.sym`: the debug symbols of this build, every IIgs and Second Sight
   address, for emulator debug runs (format in `scripts/debug_symbols.py`)
