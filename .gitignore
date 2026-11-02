@@ -1,0 +1,6 @@
+# The user's ROM files never go into the repository.
+roms/*
+!roms/README.md
+build/
+.venv/
+__pycache__/
