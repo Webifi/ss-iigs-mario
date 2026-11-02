@@ -12,8 +12,7 @@ your own ROM files when you build.
 
 ## What you need to play
 
-- An Apple IIgs with RAM in banks $02-$05: a ROM 03, or a ROM 01 with a
-  memory card of 256 KB or more
+- A ROM 03 Apple IIgs, or a ROM 01 with a memory card of 256 KB or more
 - A Second Sight card in slot 3, with a VGA monitor or an AppleColor RGB
   monitor on the card
 - A hard disk device for the disk image (see the list under Build)
@@ -35,9 +34,9 @@ You need:
 1. Put your ROM file into `roms/` (see `roms/README.md`).
 2. Run `./build.sh`.
 
-The disk images are in `build/game-disk/`, each just large enough for the
-game and its settings file. HASH in their names is a short hash of the
-volume (6 hex digits), so each build of other game data has its own name:
+The disk images are in `build/game-disk/`. The code in each name (HASH, for
+example `mario-6dc1d6.hdv`) changes when the game changes, so you can tell
+builds apart:
 
 - `mario-HASH.hdv`: a ProDOS volume, for a CFFA3000, a FloppyEmu or another
   SmartPort hard disk, a MicroDrive/Turbo, a BOOTI or an emulator
@@ -48,9 +47,9 @@ volume (6 hex digits), so each build of other game data has its own name:
 
 ## Play
 
-Start the IIgs from the SSMARIO volume. The game loads and shows its title,
-and after a short wait the demo plays, as on the NES. Select chooses a 1 or 2
-player game, and Start starts it. In a 2 player game, player 2 plays Luigi.
+Boot the IIgs from the SSMARIO disk. When it has loaded, the game shows its
+title screen and then the demo, like the NES. Press 5 (Select) to pick a 1 or
+2 player game, then 1 (Start). Player 2 plays Luigi.
 
 ### Default controls
 
@@ -62,48 +61,44 @@ player game, and Start starts it. In a 2 player game, player 2 plays Luigi.
 | Start | 1 | 2 |
 | Select | 5 | 6 |
 
-Esc opens the options menu. You cannot change the Esc key.
+Press Esc for the options menu. Esc cannot be changed.
 
-The keyboard keys work on the ADB keyboard and on a J13 keyboard. Option and
-Command work only on the ADB keyboard: on a J13 keyboard the two Apple keys
-are the joystick buttons.
+The keys work on the ADB keyboard and on a J13 keyboard. On a J13 keyboard,
+Option and Command are the joystick buttons, so use them on the ADB keyboard.
 
-SNES pads on a SNES MAX adapter: pad one is player 1, pad two is player 2.
-The direction pad moves, B is A (jump), Y is B (run), and Start and Select are
-the buttons of that player. On an NES pad, A jumps and B runs. Set the slot
-of the adapter in the DEVICES menu first.
+SNES pads (on a SNES MAX adapter): pad one is player 1, pad two is player 2.
+The D-pad moves, B jumps, Y runs, and Start and Select work as on the NES. On
+an NES pad, A jumps and B runs. Set the adapter's slot in the DEVICES menu
+first.
 
 ### Options menu
 
-Push Esc during the game to stop it and open the menu. Use the up and down
-arrows to choose, and Return to select. Esc goes back one page, and Esc on
-the first page goes back to the game. A joystick or a pad also works: its
-directions are the arrows, and its buttons are Return.
+Press Esc during play to pause and open the menu. The up and down arrows
+choose, Return selects, and Esc goes back. Esc on the first page returns to
+the game. A joystick or a pad works too: move to choose, press a button to
+select.
 
-- **CONTROLS**: the bindings of PLAYER 1, PLAYER 2 and the MENU KEY. Choose an
-  action, then CHANGE (the next key or device input replaces the binding),
-  ADD (the next input is one more binding), REMOVE, NEXT BINDING, or BOTH
-  KEYBOARDS (the binding is for the ADB keyboard, the J13 keyboard, or both).
-  There is space for 64 bindings.
-- **DEVICES**: Return or the right arrow changes a value.
-  - J13 PLAY: ON makes the game read the J13 keyboard during play (default
-    OFF). The menu always reads it.
-  - SNES MAX SLOT: the slot of the adapter (1, 2, 4, 5 or 6). The default is
-    none.
-  - RECHECK JOYSTICK: look for the joystick again.
-  - JOYSTICK PLAYER: move the joystick and its bindings to the other player
-    (default player 2).
-  - RESTORE DEFAULT BINDINGS: all bindings go back to the table above.
-- **SOUND**: MUSIC VOLUME and EFFECTS VOLUME (0 to 15, default 15). Choose a
-  level with the arrows, and set it with Return.
-- **SAVE**: write all the settings to the file SSMARIO.CONFIG on the SSMARIO
-  volume. The game reads them at the next start. Without SAVE, the changes
-  stay only until you switch off or restart the IIgs.
-- **RESUME**: go back to the game.
+- **CONTROLS**: change the keys for PLAYER 1, PLAYER 2 and the MENU KEY. Pick
+  an action, then CHANGE its key, ADD another key, or REMOVE one. After CHANGE
+  or ADD, press the new key or button. NEXT BINDING steps through the keys of
+  an action that has more than one. BOTH KEYBOARDS picks whether a key works
+  on the ADB keyboard, the J13 keyboard, or both.
+- **DEVICES**: Return or the right arrow changes a setting.
+  - J13 PLAY: turn on to play with a J13 keyboard (default off). The menu
+    always works with it.
+  - SNES MAX SLOT: the adapter's slot (1, 2, 4, 5 or 6). Default: none.
+  - RECHECK JOYSTICK: look for the joystick again, for example after you plug
+    one in.
+  - JOYSTICK PLAYER: which player uses the joystick (default player 2).
+  - RESTORE DEFAULT BINDINGS: puts all keys back as in the table above.
+- **SOUND**: music and effects volume (0 to 15, default 15). Pick a level with
+  the arrows and press Return.
+- **SAVE**: saves all settings to the disk. Without SAVE, your changes are lost
+  when you restart or switch off the IIgs.
+- **RESUME**: back to the game.
 
-The game reads the monitor type from the card when it starts, and its speed
-follows the picture rate of that monitor's mode: 60.06 frames a second on
-VGA and 60.17 on AppleColor RGB, near the NES's 60.10.
+The game runs at 60.06 frames a second on VGA and 60.17 on AppleColor RGB,
+close to the NES's 60.10.
 
 ## Folders
 
