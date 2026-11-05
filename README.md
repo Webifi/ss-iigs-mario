@@ -14,7 +14,7 @@ your own ROM files when you build.
 
 - A ROM 03 Apple IIgs, or a ROM 01 with a memory card of 256 KB or more
 - An ultra rare Second Sight card in slot 3, with compatible monitor connected.
-- A hay to booth the disk image.
+- A way to booth the disk image.
 - Optional: a game-port joystick, a J13 keyboard (ROM 00 and ROM 01), or a
   SNES MAX adapter with one or two SNES or NES pads
 
